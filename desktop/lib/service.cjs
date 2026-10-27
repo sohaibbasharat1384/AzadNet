@@ -10,6 +10,7 @@ const {parseSubscription,MAX_TEXT,validateProxy}=require('./subscriptions.cjs');
 const {DEFAULT_SETTINGS,validateSettings,generateConfig}=require('./config.cjs');
 const {Controller}=require('./controller.cjs');
 const {downloadSpeed}=require('./diagnostics.cjs');
+const {sharingInfo,sharingText}=require('./sharing.cjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function fingerprint(proxy){const order=v=>Array.isArray(v)?v.map(order):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).filter(k=>k!=='name').sort().map(k=>[k,order(v[k])])):v;return crypto.createHash('sha256').update(JSON.stringify(order(proxy))).digest('hex');}
 async function atomicJson(file,value){const tmp=`${file}.${crypto.randomBytes(5).toString('hex')}.tmp`;await fs.writeFile(tmp,JSON.stringify(value,null,2),{mode:0o600});try{await fs.rename(tmp,file);}catch(e){await fs.rm(tmp,{force:true});throw e;}}
@@ -66,7 +67,28 @@ class Service{
   }
   getLogs(){return this.logs.map(x=>({...x}));}
   async persist(){await atomicJson(this.file,{version:1,settings:this.settings,subscriptions:this.subscriptions,selectedServer:this.selectedServer});}
-  requireIdle(){if(this.busy||this.testing||this.status!=='disconnected')throw new Error('Disconnect before changing configuration');}
+  requireIdle(){if(this.busy||this.testing||this.sharingUpdating||this.status!=='disconnected')throw new Error('Disconnect before changing configuration');}
+  getSharing(){return {...sharingInfo(this.settings,this.status),updating:!!this.sharingUpdating};}
+  getSharingText(){return sharingText(this.getSharing());}
+  async updateSharing(patch,{regeneratePassword=false}={}){
+    if(this.busy||this.testing||this.speedTesting||this.sharingUpdating||this.shuttingDown)throw new Error('عملیات دیگری در حال انجام است؛ کمی صبر کنید.');
+    if(!patch||typeof patch!=='object'||Array.isArray(patch)||Object.keys(patch).some(k=>!['allowLan','lanPasswordRequired','lanUsername','lanPassword'].includes(k)))throw new Error('تنظیمات اشتراک‌گذاری نامعتبر است.');
+    const previous=structuredClone(this.settings);
+    const next=validateSettings({...patch,...(regeneratePassword?{lanPassword:crypto.randomBytes(12).toString('base64url')}: {})},this.settings);
+    if(next.allowLan&&next.lanPasswordRequired&&next.lanPassword.length<8)throw new Error('رمز عبور اشتراک‌گذاری باید حداقل ۸ کاراکتر باشد.');
+    const reconnect=this.status==='connected';this.sharingUpdating=true;this.publish();
+    try{
+      if(reconnect)await this.stop();
+      if(this.shuttingDown)throw new Error('برنامه در حال بسته‌شدن است.');
+      this.settings=next;await this.persist();
+      if(reconnect)await this.start();
+      return this.getSharing();
+    }catch(error){
+      this.settings=previous;await this.persist();
+      if(reconnect&&!this.shuttingDown&&this.status==='disconnected')try{await this.start();}catch{this.log('Could not restore connection after sharing update');}
+      throw error;
+    }finally{this.sharingUpdating=false;this.publish();}
+  }
   async saveSettings(patch){this.requireIdle();this.busy=true;try{this.settings=validateSettings(patch,this.settings);await this.persist();this.publish();return this.getState();}finally{this.busy=false;}}
   async storeImport(text,name,url,existing){
     if(!existing&&this.subscriptions.length>=100)throw new Error('At most 100 subscriptions are supported');

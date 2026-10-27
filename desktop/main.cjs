@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
@@ -35,9 +35,14 @@ if(hasLock) app.whenReady().then(async () => {
   ipcMain.handle('azadnet', async (e,action,...args) => {
     if(e.sender !== window.webContents) throw new Error('Untrusted sender');
     try {
+      if(service.sharingUpdating&&!['state','sharing','logs','traffic'].includes(action))throw new Error('در حال اعمال تنظیمات اشتراک‌گذاری؛ کمی صبر کنید.');
       switch(action) {
         case 'state': return await service.getState();
         case 'settings': return await service.saveSettings(args[0]);
+        case 'sharing': return service.getSharing();
+        case 'setSharing': return await service.updateSharing(args[0]);
+        case 'regenerateSharing': return await service.updateSharing({}, {regeneratePassword:true});
+        case 'copySharing': clipboard.writeText(service.getSharingText());return true;
         case 'importText': return await service.importText(...args);
         case 'importUrl': return await service.importUrl(...args);
         case 'refresh': return await service.refreshSubscription(args[0]);
