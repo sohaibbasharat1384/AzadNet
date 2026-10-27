@@ -11,6 +11,7 @@ const {DEFAULT_SETTINGS,validateSettings,generateConfig}=require('./config.cjs')
 const {Controller}=require('./controller.cjs');
 const {downloadSpeed}=require('./diagnostics.cjs');
 const {sharingInfo,sharingText}=require('./sharing.cjs');
+const {OfficialLicense}=require('./official-license.cjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function fingerprint(proxy){const order=v=>Array.isArray(v)?v.map(order):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).filter(k=>k!=='name').sort().map(k=>[k,order(v[k])])):v;return crypto.createHash('sha256').update(JSON.stringify(order(proxy))).digest('hex');}
 async function atomicJson(file,value){const tmp=`${file}.${crypto.randomBytes(5).toString('hex')}.tmp`;await fs.writeFile(tmp,JSON.stringify(value,null,2),{mode:0o600});try{await fs.rename(tmp,file);}catch(e){await fs.rm(tmp,{force:true});throw e;}}
@@ -34,10 +35,11 @@ function fetchSubscription(url,redirects=0){
 }
 async function checkPort(port){return new Promise((resolve,reject)=>{const s=net.createServer();s.unref();s.once('error',()=>reject(new Error(`Local port ${port} is already in use`)));s.listen(port,'127.0.0.1',()=>s.close(resolve));});}
 class Service{
-  constructor({dataDir,corePath,emit=()=>{},spawnProcess=spawn,fetchText=fetchSubscription,fragmentsSupported=false}={}){
+  constructor({dataDir,corePath,emit=()=>{},spawnProcess=spawn,fetchText=fetchSubscription,fragmentsSupported=false,officialLicense=new OfficialLicense()}={}){
     if(!dataDir)throw new Error('dataDir is required');
     this.dataDir=dataDir;this.file=path.join(dataDir,'state.json');this.corePath=corePath||process.env.AZADNET_CORE_PATH||path.join(process.resourcesPath||path.join(__dirname,'..','..','resources'),'core',process.platform==='win32'?'mihomo.exe':'mihomo');this.emit=emit;this.spawnProcess=spawnProcess;this.fetchText=fetchText;this.fragmentsSupported=fragmentsSupported===true;this.shuttingDown=false;this.startPromise=null;this.validationProcess=null;
     this.settings={...structuredClone(DEFAULT_SETTINGS),lanPassword:crypto.randomBytes(12).toString('base64url')};this.subscriptions=[];this.selectedServer=null;this.status='disconnected';this.coreVersion=null;this.error=null;this.logs=[];this.process=null;this.controller=null;this.secret='';this.delays=new Map();this.busy=false;this.testing=false;this.speedTesting=false;this.speedTestAbort=null;
+    this.officialLicense=officialLicense;this.officialLicenseStatus=null;this.licenseTimer=null;this.checkingLicense=false;
   }
   async init(){
     await fs.mkdir(this.dataDir,{recursive:true,mode:0o700});
@@ -55,7 +57,34 @@ class Service{
     this.publish();return this.getState();
   }
   proxyList(){return this.subscriptions.flatMap(s=>s.proxies);}
-  getState(){return {settings:structuredClone(this.settings),subscriptions:this.subscriptions.map(s=>({id:s.id,name:s.name,url:s.url?new URL(s.url).origin:undefined,count:s.proxies.length,updatedAt:s.updatedAt})),servers:this.subscriptions.flatMap(s=>s.proxies.map(p=>({name:p.name,type:p.type,server:p.server,port:p.port,subscriptionId:s.id,delay:this.delays.get(p.name)??null}))),selectedServer:this.selectedServer,status:this.status,coreVersion:this.coreVersion,error:this.error,testing:this.testing,speedTesting:this.speedTesting,capabilities:{fragmentsSupported:this.fragmentsSupported}};}
+  isOfficialServer(name=this.selectedServer){const target=name||this.proxyList()[0]?.name;return this.subscriptions.some(s=>s.source==='official-windows'&&s.proxies.some(p=>p.name===target));}
+  async checkOfficialLicense(){const status=await this.officialLicense.status();this.officialLicenseStatus=status;this.publish();return status;}
+  async requireOfficialLicense(name=this.selectedServer){if(this.isOfficialServer(name)&&!(await this.checkOfficialLicense()).active)throw new Error('لایسنس نسخهٔ رسمی ویندوز فعال نیست؛ سرورهای آن قابل استفاده نیستند.');}
+  async importOfficialServers(){
+    this.requireIdle();this.busy=true;
+    try{
+      const result=await this.officialLicense.servers();this.officialLicenseStatus=result.license;
+      if(!result.license.active)throw new Error('ابتدا لایسنس را در نسخهٔ رسمی ویندوز روی همین کامپیوتر فعال کنید.');
+      if(result.error||!Array.isArray(result.configs)||!result.configs.length)throw new Error('سرور ذخیره‌شده پیدا نشد؛ ابتدا در نسخهٔ رسمی فهرست سرورها را به‌روز کنید.');
+      const existing=this.subscriptions.find(s=>s.source==='official-windows');
+      const imported=await this.storeImport(JSON.stringify(result.configs),'سرورهای نسخهٔ رسمی ویندوز',undefined,existing,'official-windows');
+      this.publish();return {...imported,cachedAt:result.cachedAt};
+    }finally{this.busy=false;this.publish();}
+  }
+  startLicenseMonitor(){
+    this.stopLicenseMonitor();
+    this.licenseTimer=setInterval(()=>{void this.enforceOfficialLicense();},60000);this.licenseTimer.unref?.();
+  }
+  stopLicenseMonitor(){if(this.licenseTimer)clearInterval(this.licenseTimer);this.licenseTimer=null;}
+  async enforceOfficialLicense(){
+    if(this.checkingLicense||this.shuttingDown||this.busy||this.status!=='connected'||!this.isOfficialServer())return;
+    this.checkingLicense=true;
+    try{await this.requireOfficialLicense();}catch{
+      if(this.shuttingDown||!this.isOfficialServer())return;
+      await this.terminate();this.status='disconnected';this.error='اعتبار لایسنس نسخهٔ رسمی تأیید نشد؛ اتصال به سرور آن قطع شد.';this.log(this.error);this.publish();
+    }finally{this.checkingLicense=false;}
+  }
+  getState(){return {settings:structuredClone(this.settings),subscriptions:this.subscriptions.map(s=>({id:s.id,name:s.name,source:s.source,url:s.url?new URL(s.url).origin:undefined,count:s.proxies.length,updatedAt:s.updatedAt})),servers:this.subscriptions.flatMap(s=>s.proxies.map(p=>({name:p.name,type:p.type,server:p.server,port:p.port,subscriptionId:s.id,delay:this.delays.get(p.name)??null}))),selectedServer:this.selectedServer,status:this.status,coreVersion:this.coreVersion,error:this.error,testing:this.testing,speedTesting:this.speedTesting,officialLicense:this.officialLicenseStatus,capabilities:{fragmentsSupported:this.fragmentsSupported}};}
   publish(){this.emit('state',this.getState());}
   log(line){
     let text=String(line).replace(/\u001b\[[0-9;]*m/g,'').replace(/[\x00-\x08\x0b-\x1f]/g,'').trim().slice(0,2000);if(!text)return;
@@ -90,7 +119,7 @@ class Service{
     }finally{this.sharingUpdating=false;this.publish();}
   }
   async saveSettings(patch){this.requireIdle();this.busy=true;try{this.settings=validateSettings(patch,this.settings);await this.persist();this.publish();return this.getState();}finally{this.busy=false;}}
-  async storeImport(text,name,url,existing){
+  async storeImport(text,name,url,existing,source){
     if(!existing&&this.subscriptions.length>=100)throw new Error('At most 100 subscriptions are supported');
     if(typeof name!=='string'||!name.trim()||name.length>180)throw new Error('Invalid subscription name');
     const {proxies,warnings}=parseSubscription(text),others=this.subscriptions.filter(s=>s.id!==existing?.id).flatMap(s=>s.proxies),used=new Set(['AZADNET','DIRECT','REJECT','GLOBAL',...others.map(p=>p.name)]),renames=new Map();
@@ -98,7 +127,7 @@ class Service{
     const previous=new Map((existing?.proxies||[]).map(p=>[fingerprint(p),p.name]));
     for(const p of proxies){const original=p.name,preferred=previous.get(fingerprint(p))||original;let unique=preferred;for(let n=2;used.has(unique);n++)unique=`${preferred} (${n})`;p.name=unique;used.add(unique);if(!renames.has(original))renames.set(original,unique);}
     for(const p of proxies)if(p['dialer-proxy']&&renames.has(p['dialer-proxy']))p['dialer-proxy']=renames.get(p['dialer-proxy']);
-    const s={id:existing?.id||crypto.randomUUID(),name:name.trim(),proxies,updatedAt:new Date().toISOString(),...(url?{url}:{})};
+    const s={id:existing?.id||crypto.randomUUID(),name:name.trim(),proxies,updatedAt:new Date().toISOString(),...(url?{url}:{}),...((source||existing?.source)?{source:source||existing.source}:{})};
     if(existing)this.subscriptions[this.subscriptions.findIndex(p=>p.id===existing.id)]=s;else this.subscriptions.push(s);
     if(!this.proxyList().some(p=>p.name===this.selectedServer))this.selectedServer=proxies[0].name;
     await this.persist();this.publish();return {id:s.id,count:proxies.length,warnings};
@@ -111,13 +140,14 @@ class Service{
     this.busy=true;try{this.log('Downloading subscription over HTTPS…');const text=await this.fetchText(url);return await this.storeImport(text,name,url);}finally{this.busy=false;}
   }
   async refreshSubscription(id){
-    this.requireIdle();const s=this.subscriptions.find(s=>s.id===id);if(!s)throw new Error('Subscription not found');if(!s.url)throw new Error('This subscription was imported from text and has no refresh URL');
+    this.requireIdle();const s=this.subscriptions.find(s=>s.id===id);if(!s)throw new Error('Subscription not found');if(s.source==='official-windows')return this.importOfficialServers();if(!s.url)throw new Error('This subscription was imported from text and has no refresh URL');
     this.busy=true;try{this.log('Refreshing subscription over HTTPS…');const text=await this.fetchText(s.url);return await this.storeImport(text,s.name,s.url,s);}finally{this.busy=false;}
   }
   async removeSubscription(id){this.requireIdle();if(typeof id!=='string')throw new Error('Invalid subscription id');const index=this.subscriptions.findIndex(s=>s.id===id);if(index<0)throw new Error('Subscription not found');this.subscriptions.splice(index,1);if(!this.proxyList().some(p=>p.name===this.selectedServer))this.selectedServer=this.proxyList()[0]?.name||null;this.busy=true;try{await this.persist();this.publish();return this.getState();}finally{this.busy=false;}}
   async selectServer(name){
     if(this.speedTesting)throw new Error('Wait for the speed test to finish before changing servers');
     if(this.busy)throw new Error('Connection operation in progress');if(!this.proxyList().some(p=>p.name===name))throw new Error('Server not found');
+    await this.requireOfficialLicense(name);
     if(this.status==='connected')await this.controller.select(name,this.settings.mode==='global'?'GLOBAL':'AZADNET');
     this.selectedServer=name;await this.persist();this.publish();return this.getState();
   }
@@ -140,6 +170,7 @@ class Service{
     if(this.settings.routingMode==='subscription')throw new Error('Subscription rules and groups are not reconstructed yet; select Iran or global routing');
     this.busy=true;this.status='connecting';this.error=null;this.publish();
     try{
+      await this.requireOfficialLicense();
       await fs.access(this.corePath);await checkPort(this.settings.mixedPort);await checkPort(this.settings.controllerPort);
       this.secret=crypto.randomBytes(32).toString('hex');this.controller=new Controller(this.settings.controllerPort,this.secret);
       let geoipAvailable=false;try{await fs.copyFile(path.join(path.dirname(this.corePath),'GEOIP.dat'),path.join(this.dataDir,'GEOIP.dat'));geoipAvailable=true;}catch(e){if(e.code!=='ENOENT')throw e;}
@@ -152,12 +183,12 @@ class Service{
         await sleep(120);
       }
       if(!version||typeof version.version!=='string')throw new Error('Core controller did not become ready');
-      await this.controller.select(this.selectedServer||this.proxyList()[0].name,this.settings.mode==='global'?'GLOBAL':'AZADNET');this.coreVersion=version.version;this.status='connected';this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}`);
+      await this.controller.select(this.selectedServer||this.proxyList()[0].name,this.settings.mode==='global'?'GLOBAL':'AZADNET');this.coreVersion=version.version;this.status='connected';this.startLicenseMonitor();this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}`);
     }catch(e){await this.terminate();this.status='disconnected';this.error=e.code==='ENOENT'?'Mihomo core was not found':e.message;this.log(this.error);throw new Error(this.error);}
     finally{this.busy=false;this.publish();}
     return this.getState();
   }
-  async terminate(){const child=this.process;this.process=null;this.controller=null;if(!child)return;
+  async terminate(){this.stopLicenseMonitor();const child=this.process;this.process=null;this.controller=null;if(!child)return;
     await new Promise(resolve=>{let ended=false;const finish=()=>{if(ended)return;ended=true;clearTimeout(timer);resolve();};child.once('exit',finish);const timer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}finish();},2000);try{child.kill();}catch{finish();}if(child.exitCode!==null&&child.exitCode!==undefined)finish();});
   }
   async stop(){if(this.busy)throw new Error('Connection operation in progress');this.speedTestAbort?.abort();this.busy=true;this.status='disconnecting';this.publish();try{await this.terminate();this.status='disconnected';this.log('Disconnected');}finally{this.busy=false;this.publish();}return this.getState();}
@@ -165,6 +196,7 @@ class Service{
   async traffic(){if(this.status!=='connected'||!this.controller)return {upload:0,download:0,connections:0};const result=await this.controller.traffic();this.emit('traffic',result);return result;}
   async testServers(){
     if(this.speedTesting)throw new Error('Wait for the speed test to finish before testing servers');
+    if(this.subscriptions.some(s=>s.source==='official-windows')&&!(await this.checkOfficialLicense()).active)throw new Error('برای آزمون سرورهای نسخهٔ رسمی، لایسنس آن باید فعال باشد.');
     if(this.testing)throw new Error('Server tests already running');const alreadyConnected=this.status==='connected';this.testing=true;this.publish();
     try{
       if(!alreadyConnected)await this.start();const names=this.proxyList().map(p=>p.name);let cursor=0;

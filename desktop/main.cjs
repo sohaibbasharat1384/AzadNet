@@ -38,6 +38,8 @@ if(hasLock) app.whenReady().then(async () => {
       if(service.sharingUpdating&&!['state','sharing','logs','traffic'].includes(action))throw new Error('در حال اعمال تنظیمات اشتراک‌گذاری؛ کمی صبر کنید.');
       switch(action) {
         case 'state': return await service.getState();
+        case 'officialStatus': return await service.checkOfficialLicense();
+        case 'officialImport': return await service.importOfficialServers();
         case 'settings': return await service.saveSettings(args[0]);
         case 'sharing': return service.getSharing();
         case 'setSharing': return await service.updateSharing(args[0]);

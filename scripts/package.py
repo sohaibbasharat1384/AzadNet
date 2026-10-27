@@ -1,6 +1,6 @@
 """Local packaging from pinned, verified runtime downloads."""
 from pathlib import Path
-import hashlib,json,shutil,zipfile,tarfile,io,os,time,gzip
+import hashlib,json,shutil,zipfile,tarfile,io,os,time,gzip,sys
 
 ROOT=Path(__file__).resolve().parent.parent
 DIST=ROOT/'dist'
@@ -39,6 +39,9 @@ with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
     for f in sorted(win.rglob('*')):
         if f.is_file():z.write(f,f.relative_to(DIST))
 print(f'Windows: {archive}',flush=True)
+if '--windows-only' in sys.argv:
+    (DIST/f'SHA256SUMS-{VERSION}.txt').write_text(f'{sha(archive)}  {archive.name}\n',encoding='utf8')
+    raise SystemExit(0)
 
 linuxzip=ROOT/'.tools/electron-linux.zip'
 expected=next(line.split()[0] for line in (ROOT/'.tools/electron-SHASUMS256.txt').read_text().splitlines() if line.endswith(f'electron-v{ELECTRON}-linux-x64.zip'))
