@@ -34,6 +34,8 @@ if win.exists():raise SystemExit(f'Refusing to overwrite existing package direct
 shutil.copytree(ROOT/'node_modules/electron/dist',win)
 (win/'electron.exe').rename(win/'AzadNet.exe')
 app_contents(win)
+(win/'Run-as-Administrator.ps1').write_text('$ErrorActionPreference = "Stop"\nStart-Process -FilePath (Join-Path $PSScriptRoot "AzadNet.exe") -WorkingDirectory $PSScriptRoot -Verb RunAs\n',encoding='utf8')
+(win/'Run-as-Administrator.cmd').write_text('@echo off\r\necho Close AzadNet completely before continuing.\r\npause\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Run-as-Administrator.ps1"\r\n',encoding='utf8',newline='')
 archive=DIST/f'{win.name}.zip'
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
     for f in sorted(win.rglob('*')):
@@ -57,12 +59,38 @@ with zipfile.ZipFile(linuxzip) as z:
 (linux/'electron').rename(linux/'azadnet')
 app_contents(linux,True)
 (linux/'run-azadnet.sh').write_text('#!/bin/sh\ncd "$(dirname "$0")" || exit 1\nexec ./azadnet "$@"\n',encoding='utf8',newline='\n')
+(linux/'enable-tun.sh').write_text('''#!/bin/sh
+set -eu
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Run: sudo /opt/azadnet/enable-tun.sh" >&2
+  exit 1
+fi
+core=/opt/azadnet/resources/core/mihomo
+if [ ! -f "$core" ] || [ -L "$core" ]; then
+  echo "Install the AzadNet .deb package first." >&2
+  exit 1
+fi
+if ! command -v setcap >/dev/null 2>&1; then
+  echo "Install libcap2-bin, then retry." >&2
+  exit 1
+fi
+if [ ! -c /dev/net/tun ]; then
+  modprobe tun
+fi
+if [ ! -c /dev/net/tun ]; then
+  echo "/dev/net/tun is unavailable; TUN must be enabled on the host." >&2
+  exit 1
+fi
+setcap cap_net_admin,cap_net_raw+ep "$core"
+getcap "$core"
+echo "TUN permissions enabled. Run AzadNet normally, without sudo."
+''',encoding='utf8',newline='\n')
 desktop='[Desktop Entry]\nName=AzadNet\nName[fa]=آزادنت\nComment=Persian desktop proxy and VPN client\nExec=/opt/azadnet/azadnet\nIcon=/opt/azadnet/resources/app/desktop/icon.svg\nType=Application\nCategories=Network;\nTerminal=false\n'
 (linux/'azadnet.desktop').write_text(desktop,encoding='utf8',newline='\n')
 
 def mode_for(name):
     if name.endswith('chrome-sandbox'):return 0o4755
-    if Path(name).name in ('azadnet','mihomo','chrome_crashpad_handler','run-azadnet.sh'):return 0o755
+    if Path(name).name in ('azadnet','mihomo','chrome_crashpad_handler','run-azadnet.sh','enable-tun.sh'):return 0o755
     return 0o644
 def add_file(tar,file,arcname):
     info=tar.gettarinfo(str(file),arcname)
@@ -84,7 +112,7 @@ Section: net
 Priority: optional
 Architecture: amd64
 Maintainer: AzadNet local build
-Depends: libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libdrm2, libgbm1, libasound2t64 | libasound2, libx11-xcb1, libcups2t64 | libcups2
+Depends: libcap2-bin, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libdrm2, libgbm1, libasound2t64 | libasound2, libx11-xcb1, libcups2t64 | libcups2
 Description: Independent Persian desktop proxy client
  Reconstructed from observed InternetAzad369 Android behavior.
  Includes Mihomo and an Electron interface. TUN needs network privileges.

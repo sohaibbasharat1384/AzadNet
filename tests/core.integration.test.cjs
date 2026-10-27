@@ -17,7 +17,7 @@ test('real packaged core routes an HTTP request through imported proxy and stops
   try{
     const upstreamPort=await listen(upstream),mixedPort=await freePort(),controllerPort=await freePort();
     const core=process.env.AZADNET_TEST_CORE_PATH||path.resolve(__dirname,'../resources/core',process.platform==='win32'?'mihomo.exe':'mihomo');
-    service=new Service({dataDir:dir,corePath:core});await service.init();
+    service=new Service({dataDir:dir,corePath:core,delayUrl:'http://fixture.azadnet.test/generate_204'});await service.init();
     await service.saveSettings({mixedPort,controllerPort,routingMode:'global',mode:'rule'});
     await service.importText(`proxies:\n - name: Local fixture\n   type: http\n   server: 127.0.0.1\n   port: ${upstreamPort}\n`,'Fixture');
     await service.start();assert.equal(service.getState().status,'connected');

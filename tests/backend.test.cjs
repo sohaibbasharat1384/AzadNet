@@ -14,6 +14,7 @@ const {Controller}=require('../desktop/lib/controller.cjs');
 const Service=require('../desktop/lib/service.cjs');
 const UUID='fae18768-5eb1-47c1-83b5-293e45994fdc';
 const VLESS=`vless://${UUID}@test.example:443?security=reality&type=ws&path=%2Fvpn&host=cdn.example&sni=test.example&pbk=public-key&sid=abcd#Test`;
+async function unusedPort(){const s=http.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 test('URI parsing preserves reality and websocket details without disabling TLS checks',()=>{
   const {proxies,warnings}=parseSubscription(VLESS);assert.equal(warnings.length,0);const p=proxies[0];
   assert.equal(p.uuid,UUID);assert.equal(p.server,'test.example');assert.equal(p['ws-opts'].path,'/vpn');assert.equal(p['ws-opts'].headers.Host,'cdn.example');assert.equal(p['reality-opts']['short-id'],'abcd');assert.equal(p['skip-cert-verify'],false);
@@ -47,14 +48,14 @@ test('settings refuse unsafe values and config replaces imported listeners with 
 });
 test('controller sends secret, encodes server names, rejects HTTP errors and aggregates real traffic totals',async()=>{
   const seen=[];const server=http.createServer((req,res)=>{seen.push([req.method,req.url,req.headers.authorization]);if(req.url==='/version'){res.end('{"version":"test"}');}else if(req.url==='/connections')res.end('{"uploadTotal":12,"downloadTotal":34,"connections":[{}]}');else if(req.url.startsWith('/proxies/'))res.end('{"delay":42}');else{res.writeHead(403);res.end('{}');}});
-  await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const c=new Controller(server.address().port,'token');assert.deepEqual(await c.version(),{version:'test'});assert.deepEqual(await c.traffic(),{upload:12,download:34,connections:1});assert.equal((await c.delay('A / B')).delay,42);assert.equal(seen[2][1].startsWith('/proxies/A%20%2F%20B/delay'),true);assert.equal(seen[0][2],'Bearer token');await assert.rejects(c.request('GET','/forbidden'),/403/);}finally{await new Promise(r=>server.close(r));}
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));try{const c=new Controller(server.address().port,'token');assert.deepEqual(await c.version(),{version:'test'});assert.deepEqual(await c.traffic(),{upload:12,download:34,connections:1});assert.equal((await c.delay('A / B')).delay,42);assert.equal(seen[2][1].startsWith('/proxies/A%20%2F%20B/delay'),true);assert.equal(new URL(seen[2][1],'http://localhost').searchParams.get('url'),'https://cp.cloudflare.com/generate_204');assert.equal(seen[0][2],'Bearer token');await assert.rejects(c.request('GET','/forbidden'),/403/);}finally{await new Promise(r=>server.close(r));}
 });
 test('service persists imports privately, redacts credentials and handles failed validation without claiming connection',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'azadnet-test-'));try{
     const spawnProcess=()=>{const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.kill=()=>true;setImmediate(()=>p.emit('exit',1,null));return p;};
     const svc=new Service({dataDir:dir,corePath:process.execPath,spawnProcess});await svc.init();await svc.importText(VLESS,'First');await svc.importText(VLESS,'Second');assert.equal(svc.getState().servers[1].name,'Test (2)');assert.equal(svc.getState().servers[0].uuid,undefined);assert.equal(svc.getState().subscriptions[0].proxies,undefined);
     svc.log('uuid='+UUID);assert.equal(svc.getLogs().at(-1).message.includes(UUID),false);
-    await assert.rejects(svc.start(),/rejected configuration/);assert.equal(svc.status,'disconnected');assert.equal(svc.process,null);
+    await svc.saveSettings({mixedPort:await unusedPort(),controllerPort:await unusedPort()});await assert.rejects(svc.start(),/rejected configuration/);assert.equal(svc.status,'disconnected');assert.equal(svc.process,null);
     const restored=new Service({dataDir:dir});await restored.init();assert.equal(restored.getState().servers.length,2);await restored.removeSubscription(restored.getState().subscriptions[0].id);assert.equal(restored.getState().servers.length,1);
   }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
@@ -90,6 +91,6 @@ test('shutdown during config validation cannot launch or leak a live core',async
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'azadnet-shutdown-'));try{
     let validations=0,live=0,killed=0;
     const spawnProcess=(_exe,args)=>{const p=new EventEmitter();p.stdout=new PassThrough();p.stderr=new PassThrough();p.kill=()=>{killed++;setImmediate(()=>p.emit('exit',null,'SIGTERM'));return true;};if(args.includes('-t'))validations++;else live++;return p;};
-    const svc=new Service({dataDir:dir,corePath:process.execPath,spawnProcess});await svc.init();await svc.importText(VLESS,'Remote');const pending=svc.start().catch(e=>e);for(let i=0;i<100&&!validations;i++)await new Promise(r=>setTimeout(r,5));assert.equal(validations,1);await svc.shutdown();const result=await pending;assert.ok(result instanceof Error);assert.equal(killed,1);assert.equal(live,0);assert.equal(svc.process,null);assert.equal(svc.status,'disconnected');await assert.rejects(svc.start(),/shutting down/);
+    const svc=new Service({dataDir:dir,corePath:process.execPath,spawnProcess});await svc.init();await svc.saveSettings({mixedPort:await unusedPort(),controllerPort:await unusedPort()});await svc.importText(VLESS,'Remote');const pending=svc.start().catch(e=>e);for(let i=0;i<100&&!validations;i++)await new Promise(r=>setTimeout(r,5));assert.equal(validations,1);await svc.shutdown();const result=await pending;assert.ok(result instanceof Error);assert.equal(killed,1);assert.equal(live,0);assert.equal(svc.process,null);assert.equal(svc.status,'disconnected');await assert.rejects(svc.start(),/shutting down/);
   }finally{await fs.rm(dir,{recursive:true,force:true});}
 });

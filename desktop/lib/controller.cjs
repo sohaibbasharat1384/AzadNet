@@ -1,7 +1,7 @@
 'use strict';
 const http=require('node:http');
 class Controller{
-  constructor(port,secret){this.port=port;this.secret=secret;}
+  constructor(port,secret,{delayUrl='https://cp.cloudflare.com/generate_204'}={}){this.port=port;this.secret=secret;this.delayUrl=delayUrl;}
   request(method,path,body,timeout=6000){
     return new Promise((resolve,reject)=>{
       const data=body===undefined?null:JSON.stringify(body);
@@ -15,8 +15,9 @@ class Controller{
     });
   }
   version(){return this.request('GET','/version');}
+  configs(){return this.request('GET','/configs');}
   select(name,group='AZADNET'){return this.request('PUT',`/proxies/${encodeURIComponent(group)}`,{name});}
-  delay(name){return this.request('GET',`/proxies/${encodeURIComponent(name)}/delay?timeout=3000&url=${encodeURIComponent('http://cp.cloudflare.com/generate_204')}`,undefined,4500);}
+  delay(name){return this.request('GET',`/proxies/${encodeURIComponent(name)}/delay?timeout=3000&url=${encodeURIComponent(this.delayUrl)}`,undefined,4500);}
   traffic(){return this.request('GET','/connections').then(x=>({upload:x.uploadTotal||0,download:x.downloadTotal||0,connections:x.connections?.length||0}));}
 }
 module.exports={Controller};

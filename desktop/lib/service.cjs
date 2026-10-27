@@ -36,12 +36,12 @@ function fetchSubscription(url,redirects=0){
 }
 async function checkPort(port){return new Promise((resolve,reject)=>{const s=net.createServer();s.unref();s.once('error',()=>reject(new Error(`Local port ${port} is already in use`)));s.listen(port,'127.0.0.1',()=>s.close(resolve));});}
 class Service{
-  constructor({dataDir,corePath,emit=()=>{},spawnProcess=spawn,fetchText=fetchSubscription,fragmentsSupported=false,officialLicense=new OfficialLicense()}={}){
+  constructor({dataDir,corePath,emit=()=>{},spawnProcess=spawn,fetchText=fetchSubscription,fragmentsSupported=false,officialLicense=new OfficialLicense(),delayUrl}={}){
     if(!dataDir)throw new Error('dataDir is required');
     this.dataDir=dataDir;this.file=path.join(dataDir,'state.json');this.corePath=corePath||process.env.AZADNET_CORE_PATH||path.join(process.resourcesPath||path.join(__dirname,'..','..','resources'),'core',process.platform==='win32'?'mihomo.exe':'mihomo');this.emit=emit;this.spawnProcess=spawnProcess;this.fetchText=fetchText;this.fragmentsSupported=fragmentsSupported===true;this.shuttingDown=false;this.startPromise=null;this.validationProcess=null;
     this.settings={...structuredClone(DEFAULT_SETTINGS),lanPassword:crypto.randomBytes(12).toString('base64url')};this.subscriptions=[];this.selectedServer=null;this.status='disconnected';this.coreVersion=null;this.error=null;this.logs=[];this.process=null;this.controller=null;this.secret='';this.delays=new Map();this.busy=false;this.testing=false;this.speedTesting=false;this.speedTestAbort=null;
     this.officialLicense=officialLicense;this.officialLicenseStatus=null;this.licenseTimer=null;this.checkingLicense=false;
-    this.offlineTransfer=new OfflineTransfer({dataDir});this.offlineLicenseStatus=null;
+    this.offlineTransfer=new OfflineTransfer({dataDir});this.offlineLicenseStatus=null;this.activeTun=false;this.delayUrl=delayUrl;
   }
   async init(){
     await fs.mkdir(this.dataDir,{recursive:true,mode:0o700});
@@ -106,7 +106,7 @@ class Service{
       await this.terminate();this.status='disconnected';this.error='اعتبار اشتراک یا بستهٔ آفلاین تأیید نشد؛ اتصال آن قطع شد.';this.log(this.error);this.publish();
     }finally{this.checkingLicense=false;}
   }
-  getState(){return {settings:structuredClone(this.settings),subscriptions:this.subscriptions.map(s=>({id:s.id,name:s.name,source:s.source,url:s.url?new URL(s.url).origin:undefined,count:s.proxies.length,updatedAt:s.updatedAt})),servers:this.subscriptions.flatMap(s=>s.proxies.map(p=>({name:p.name,type:p.type,server:p.server,port:p.port,subscriptionId:s.id,delay:this.delays.get(p.name)??null}))),selectedServer:this.selectedServer,status:this.status,coreVersion:this.coreVersion,error:this.error,testing:this.testing,speedTesting:this.speedTesting,officialLicense:this.officialLicenseStatus,offlineLicense:this.offlineLicenseStatus,capabilities:{fragmentsSupported:this.fragmentsSupported}};}
+  getState(){return {settings:structuredClone(this.settings),subscriptions:this.subscriptions.map(s=>({id:s.id,name:s.name,source:s.source,url:s.url?new URL(s.url).origin:undefined,count:s.proxies.length,updatedAt:s.updatedAt})),servers:this.subscriptions.flatMap(s=>s.proxies.map(p=>({name:p.name,type:p.type,server:p.server,port:p.port,subscriptionId:s.id,delay:this.delays.get(p.name)??null}))),selectedServer:this.selectedServer,status:this.status,activeTun:this.activeTun,coreVersion:this.coreVersion,error:this.error,testing:this.testing,speedTesting:this.speedTesting,officialLicense:this.officialLicenseStatus,offlineLicense:this.offlineLicenseStatus,capabilities:{fragmentsSupported:this.fragmentsSupported,platform:process.platform}};}
   publish(){this.emit('state',this.getState());}
   log(line){
     let text=String(line).replace(/\u001b\[[0-9;]*m/g,'').replace(/[\x00-\x08\x0b-\x1f]/g,'').trim().slice(0,2000);if(!text)return;
@@ -167,10 +167,15 @@ class Service{
   }
   async removeSubscription(id){this.requireIdle();if(typeof id!=='string')throw new Error('Invalid subscription id');const index=this.subscriptions.findIndex(s=>s.id===id);if(index<0)throw new Error('Subscription not found');this.subscriptions.splice(index,1);if(!this.proxyList().some(p=>p.name===this.selectedServer))this.selectedServer=this.proxyList()[0]?.name||null;this.busy=true;try{await this.persist();this.publish();return this.getState();}finally{this.busy=false;}}
   async selectServer(name){
+    if(this.testing)throw new Error('Wait for the server test to finish before changing servers');
     if(this.speedTesting)throw new Error('Wait for the speed test to finish before changing servers');
     if(this.busy)throw new Error('Connection operation in progress');if(!this.proxyList().some(p=>p.name===name))throw new Error('Server not found');
     await this.requireOfficialLicense(name);
-    if(this.status==='connected')await this.controller.select(name,this.settings.mode==='global'?'GLOBAL':'AZADNET');
+    if(this.status==='connected'){
+      try{const result=await this.controller.delay(name);if(!Number.isFinite(result?.delay)||result.delay<=0)throw new Error('No response');this.delays.set(name,result.delay);}
+      catch{this.delays.set(name,-1);this.publish();throw new Error('این سرور پاسخ نداد؛ سرور فعلی حفظ شد. سرور دیگری انتخاب کنید.');}
+      await this.controller.select(name,this.settings.mode==='global'?'GLOBAL':'AZADNET');
+    }
     this.selectedServer=name;await this.persist();this.publish();return this.getState();
   }
   spawnCore(args){return this.spawnProcess(this.corePath,args,{cwd:this.dataDir,windowsHide:true,stdio:['ignore','pipe','pipe'],shell:false});}
@@ -181,12 +186,12 @@ class Service{
     const timer=setTimeout(()=>{child.kill();done(new Error('Core configuration validation timed out'));},15000);
     child.once('error',()=>done(new Error('Could not launch Mihomo core')));child.once('exit',(code,signal)=>done(code===0?null:new Error(`Mihomo rejected configuration (${signal||code}); see logs`)));
   });}
-  async start(){
+  async start({testOnly=false}={}){
     if(this.shuttingDown)throw new Error('Application is shutting down');
     if(this.startPromise)throw new Error('Connection operation in progress');
-    this.startPromise=this.runStart();try{return await this.startPromise;}finally{this.startPromise=null;}
+    this.startPromise=this.runStart({testOnly});try{return await this.startPromise;}finally{this.startPromise=null;}
   }
-  async runStart(){
+  async runStart({testOnly=false}={}){
     if(this.busy)throw new Error('Connection operation in progress');if(this.status==='connected')return this.getState();if(!this.proxyList().length)throw new Error('Import a subscription or server first');
     if(this.settings.fragmentsEnabled&&!this.fragmentsSupported)throw new Error('The public Mihomo core does not implement this APK’s custom fragments. Activate fragments only with a verified compatible custom core');
     if(this.settings.routingMode==='subscription')throw new Error('Subscription rules and groups are not reconstructed yet; select Iran or global routing');
@@ -194,23 +199,40 @@ class Service{
     try{
       await this.requireOfficialLicense();
       await fs.access(this.corePath);await checkPort(this.settings.mixedPort);await checkPort(this.settings.controllerPort);
-      this.secret=crypto.randomBytes(32).toString('hex');this.controller=new Controller(this.settings.controllerPort,this.secret);
+      this.secret=crypto.randomBytes(32).toString('hex');this.controller=new Controller(this.settings.controllerPort,this.secret,{delayUrl:this.delayUrl});
       let geoipAvailable=false;try{await fs.copyFile(path.join(path.dirname(this.corePath),'GEOIP.dat'),path.join(this.dataDir,'GEOIP.dat'));geoipAvailable=true;}catch(e){if(e.code!=='ENOENT')throw e;}
-      const file=path.join(this.dataDir,'runtime.yaml'),config=generateConfig(this.settings,this.proxyList(),this.secret,this.selectedServer,{geoipAvailable,fragmentsSupported:this.fragmentsSupported});await fs.writeFile(file,stringify(config),{mode:0o600});if(this.shuttingDown)throw new Error('Connection cancelled');await this.testConfig(file);if(this.shuttingDown)throw new Error('Connection cancelled');
+      // Latency tests need only the local listener, even when saved TUN settings
+      // cannot be enabled. Never change system routes just to test servers.
+      const file=path.join(this.dataDir,'runtime.yaml'),config=generateConfig(testOnly?{...this.settings,tun:false}:this.settings,this.proxyList(),this.secret,this.selectedServer,{geoipAvailable,fragmentsSupported:this.fragmentsSupported});await fs.writeFile(file,stringify(config),{mode:0o600});if(this.shuttingDown)throw new Error('Connection cancelled');await this.testConfig(file);if(this.shuttingDown)throw new Error('Connection cancelled');
       const child=this.spawnCore(['-d',this.dataDir,'-f',file]);this.process=child;this.capture(child);
-      let failure;child.once('error',()=>{failure=new Error('Could not launch Mihomo core');});child.once('exit',(code,signal)=>{failure=new Error(`Core exited (${signal||code})`);if(this.process===child){this.process=null;if(this.status==='connected'){this.status='disconnected';this.error=failure.message;this.publish();}}});
+      let failure;child.once('error',()=>{failure=new Error('Could not launch Mihomo core');});child.once('exit',(code,signal)=>{failure=new Error(`Core exited (${signal||code})`);if(this.process===child){this.process=null;this.activeTun=false;if(this.status==='connected'){this.status='disconnected';this.error=failure.message;this.publish();}}});
       let version;for(let i=0;i<50;i++){
         if(this.shuttingDown)throw new Error('Connection cancelled');if(failure)throw failure;
         try{version=await this.controller.version();if(version&&typeof version.version==='string')break;}catch{}
         await sleep(120);
       }
       if(!version||typeof version.version!=='string')throw new Error('Core controller did not become ready');
-      await this.controller.select(this.selectedServer||this.proxyList()[0].name,this.settings.mode==='global'?'GLOBAL':'AZADNET');this.coreVersion=version.version;this.status='connected';this.startLicenseMonitor();this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}`);
+      if(this.settings.tun&&!testOnly){
+        let runtime;
+        for(let i=0;i<10;i++){runtime=await this.controller.configs();if(runtime?.tun?.enable===true)break;await sleep(120);}
+        if(runtime?.tun?.enable!==true||runtime.tun['auto-route']!==true){
+          throw new Error(process.platform==='win32'?'رابط TUN فعال نشد. برنامه را کامل ببندید و AzadNet.exe را با Run as administrator اجرا کنید؛ سپس دوباره متصل شوید. جزئیات در گزارش اتصال است.':'رابط TUN فعال نشد. پس از نصب بسته، دستور sudo /opt/azadnet/enable-tun.sh را اجرا کنید و دوباره متصل شوید. جزئیات در گزارش اتصال است.');
+        }
+        this.activeTun=true;
+      }
+      const selected=this.selectedServer||this.proxyList()[0].name;
+      await this.controller.select(selected,this.settings.mode==='global'?'GLOBAL':'AZADNET');
+      if(!testOnly){
+        try{const result=await this.controller.delay(selected);if(!Number.isFinite(result?.delay)||result.delay<=0)throw new Error('No response');this.delays.set(selected,result.delay);}
+        catch{this.delays.set(selected,-1);throw new Error('سرور انتخاب‌شده پاسخ نداد. «سنجش و انتخاب سرور پاسخ‌گو» را بزنید و پس از پایان دوباره متصل شوید.');}
+      }
+      if(this.shuttingDown)throw new Error('Connection cancelled');if(failure)throw failure;
+      this.coreVersion=version.version;this.status='connected';this.startLicenseMonitor();this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}; TUN: ${this.activeTun?'active':'off'}`);
     }catch(e){await this.terminate();this.status='disconnected';this.error=e.code==='ENOENT'?'Mihomo core was not found':e.message;this.log(this.error);throw new Error(this.error);}
     finally{this.busy=false;this.publish();}
     return this.getState();
   }
-  async terminate(){this.stopLicenseMonitor();const child=this.process;this.process=null;this.controller=null;if(!child)return;
+  async terminate(){this.stopLicenseMonitor();this.activeTun=false;const child=this.process;this.process=null;this.controller=null;if(!child)return;
     await new Promise(resolve=>{let ended=false;const finish=()=>{if(ended)return;ended=true;clearTimeout(timer);resolve();};child.once('exit',finish);const timer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}finish();},2000);try{child.kill();}catch{finish();}if(child.exitCode!==null&&child.exitCode!==undefined)finish();});
   }
   async stop(){if(this.busy)throw new Error('Connection operation in progress');this.speedTestAbort?.abort();this.busy=true;this.status='disconnecting';this.publish();try{await this.terminate();this.status='disconnected';this.log('Disconnected');}finally{this.busy=false;this.publish();}return this.getState();}
@@ -222,9 +244,16 @@ class Service{
     if(this.subscriptions.some(s=>s.source==='offline-transfer')&&!(await this.checkOfflineLicense()).active)throw new Error('برای آزمون این سرورها، بستهٔ آفلاین باید معتبر باشد.');
     if(this.testing)throw new Error('Server tests already running');const alreadyConnected=this.status==='connected';this.testing=true;this.publish();
     try{
-      if(!alreadyConnected)await this.start();const names=this.proxyList().map(p=>p.name);let cursor=0;
-      const worker=async()=>{while(cursor<names.length){const name=names[cursor++];if(!this.controller)break;try{const result=await this.controller.delay(name);this.delays.set(name,Number.isFinite(result.delay)?result.delay:null);}catch{this.delays.set(name,-1);}this.publish();}};
-      await Promise.all(Array.from({length:Math.min(5,names.length)},worker));return this.getState();
+      if(!alreadyConnected)await this.start({testOnly:true});const names=this.proxyList().map(p=>p.name);let cursor=0;const responding=[];
+      const worker=async()=>{while(cursor<names.length){const name=names[cursor++];if(!this.controller)break;try{const result=await this.controller.delay(name);if(!Number.isFinite(result?.delay)||result.delay<=0)throw new Error('No response');this.delays.set(name,result.delay);responding.push({name,delay:result.delay});}catch{this.delays.set(name,-1);}this.publish();}};
+      await Promise.all(Array.from({length:Math.min(5,names.length)},worker));
+      if(this.shuttingDown)throw new Error('Connection cancelled');
+      if(!responding.length)throw new Error('هیچ سروری پاسخ نداد؛ فهرست سرورها را در نسخهٔ رسمی به‌روز و دوباره وارد کنید.');
+      if(!responding.some(p=>p.name===this.selectedServer)){
+        const best=responding.sort((a,b)=>a.delay-b.delay)[0];await this.requireOfficialLicense(best.name);
+        await this.controller.select(best.name,this.settings.mode==='global'?'GLOBAL':'AZADNET');this.selectedServer=best.name;await this.persist();this.log('Selected a responding server after the previous server failed its test.');
+      }
+      return this.getState();
     }finally{if(!alreadyConnected&&this.status==='connected')await this.stop();this.testing=false;this.publish();}
   }
   async speedTest({bytes=1048576}={}){

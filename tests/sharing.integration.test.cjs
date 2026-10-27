@@ -14,13 +14,14 @@ async function readN(socket,n){for(;;){const data=socket.read(n);if(data)return 
 test('real core shares HTTP/SOCKS5 with LAN password and closes LAN access when disabled',{skip:process.env.AZADNET_TEST_REAL_CORE!=='1',timeout:30000},async t=>{
   const nic=sharingInfo({mixedPort:1},'disconnected').addresses[0];if(!nic){t.skip('No private IPv4 interface on this test host');return;}
   const root=path.resolve(__dirname,'../.tools/tmp');await fs.mkdir(root,{recursive:true});const dir=await fs.mkdtemp(path.join(root,'lan-integration-'));
-  const origin=http.createServer((_req,res)=>res.end('shared-via-selected-proxy'));
+  const reply=(req,res)=>{if(req.url.includes('generate_204'))setTimeout(()=>{res.writeHead(204);res.end();},10);else res.end('shared-via-selected-proxy');};
+  const origin=http.createServer(reply);
   const originPort=await listen(origin);let forwarded=0;
-  const upstream=http.createServer((_req,res)=>{forwarded++;res.end('shared-via-selected-proxy');});
+  const upstream=http.createServer((req,res)=>{forwarded++;reply(req,res);});
   upstream.on('connect',(_req,socket,head)=>{forwarded++;const peer=net.connect(originPort,'127.0.0.1',()=>{socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');if(head.length)peer.write(head);socket.pipe(peer);peer.pipe(socket);});peer.on('error',()=>socket.destroy());socket.on('error',()=>peer.destroy());socket.on('close',()=>peer.destroy());});
   let svc,socks;
   try{
-    const upstreamPort=await listen(upstream),mixedPort=await freePort(),controllerPort=await freePort();svc=new Service({dataDir:dir,corePath:path.resolve(__dirname,'../resources/core',process.platform==='win32'?'mihomo.exe':'mihomo')});await svc.init();
+    const upstreamPort=await listen(upstream),mixedPort=await freePort(),controllerPort=await freePort();svc=new Service({dataDir:dir,corePath:path.resolve(__dirname,'../resources/core',process.platform==='win32'?'mihomo.exe':'mihomo'),delayUrl:'http://fixture.sharing.test/generate_204'});await svc.init();
     await svc.saveSettings({mixedPort,controllerPort,routingMode:'global'});
     await svc.importText(`proxies:\n - {name: Sharing fixture, type: http, server: 127.0.0.1, port: ${upstreamPort}}`);
     await svc.start();await svc.updateSharing({allowLan:true,lanUsername:'fixture',lanPassword:'strong-fixture-pass',lanPasswordRequired:true});
