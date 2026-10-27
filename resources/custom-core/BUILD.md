@@ -27,7 +27,8 @@ CLI executables with CGO disabled, `with_gvisor`, baseline `GOAMD64=v1` and
 is cross-compiled and must additionally be tested on Ubuntu. The custom CLI
 uses Mihomo's regular HTTP controller; the FlClash wrapper is not included.
 
-`analysis/helpers/check-custom-fragments.cjs` is a local-only Windows integration
-check: malformed fragments must fail validation, and a CONNECT tunnel to a local
-TCP receiver must observe rewritten TLS record bytes plus staged writes. It
-does not modify a system proxy or routing and does not contact a public server.
+Local development also checked malformed fragment rejection and observed TLS
+record rewriting plus staged writes through a CONNECT tunnel to a local TCP
+receiver. That investigation helper and raw output remain outside the public
+repository. The application integration tests in `tests/` use local fixtures and
+do not change the system proxy or routing.
