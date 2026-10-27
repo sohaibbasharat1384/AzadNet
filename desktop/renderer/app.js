@@ -3,12 +3,12 @@ const $=s=>document.querySelector(s);
 const api=window.azadnet;
 let state=null,startingAt=0,busy=false,toastTimer,lastTraffic=null;
 const fa=n=>Number(n).toLocaleString('fa-IR');
-const titles={home:'اتصال امن',servers:'سرورها و اشتراک‌ها',settings:'تنظیمات اتصال',sharing:'اشتراک‌گذاری وی‌پی‌ان',license:'لایسنس نسخهٔ رسمی',logs:'گزارش اتصال'};
+const titles={home:'اتصال امن',servers:'سرورها و اشتراک‌ها',settings:'تنظیمات اتصال',sharing:'اشتراک‌گذاری وی‌پی‌ان',license:'اشتراک و انتقال آفلاین',logs:'گزارش اتصال'};
 const presets={mahsa:'https://raw.githubusercontent.com/hiddify/hiddify-app/refs/heads/main/test.configs/mahsa#Mahsa',backup:'https://raw.githubusercontent.com/4n0nymou3/multi-proxy-config-fetcher/refs/heads/main/configs/proxy_configs.txt'};
 function notify(message,error=false){const translations={'Import a subscription or server first':'ابتدا یک اشتراک یا کانفیگ وارد کنید.','Disconnect before changing configuration':'برای تغییر تنظیمات ابتدا اتصال را قطع کنید.','Connection operation in progress':'عملیات اتصال در حال انجام است.','Server tests already running':'سنجش سرورها در حال انجام است.','Core controller did not become ready':'هسته آماده نشد؛ گزارش اتصال را بررسی کنید.'};const t=$('#toast');t.textContent=translations[String(message)]||String(message);t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),6000);}
 async function call(action,...args){const result=await api.call(action,...args);if(result?.__error)throw new Error(result.__error);return result;}
 async function run(fn){try{return await fn();}catch(e){notify(e.message,true);return null;}}
-function page(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===`page-${name}`));document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('#page-title').textContent=titles[name];if(name==='settings')fillSettings();if(name==='sharing')run(()=>refreshSharing(true));if(name==='license')run(refreshOfficialLicense);if(name==='logs')run(refreshLogs);}
+function page(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===`page-${name}`));document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('#page-title').textContent=titles[name];if(name==='settings')fillSettings();if(name==='sharing')run(()=>refreshSharing(true));if(name==='license')run(async()=>{await refreshOfficialLicense();await refreshOffline();});if(name==='logs')run(refreshLogs);}
 document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>page(b.dataset.page)));
 function openImport(){ $('#import-error').textContent='';$('#import-dialog').showModal();$('#import-content').focus(); }
 ['home-import','add-subscription','empty-import'].forEach(id=>$('#'+id).addEventListener('click',openImport));
@@ -50,7 +50,7 @@ async function refreshSharing(fill=false){
 }
 async function refreshOfficialLicense(){
   $('#official-status').textContent='در حال بررسی فعال‌سازی نسخهٔ رسمی…';$('#official-import').disabled=true;
-  const info=await call('officialStatus');
+  const info=await call('officialStatus');$('#official-card').hidden=info.reason==='windows_only';$('#offline-export').disabled=!info.active;
   $('#official-status').textContent=info.active?'لایسنس نسخهٔ رسمی فعال است':info.available?'فعال‌سازی معتبر پیدا نشد':info.reason==='windows_only'?'این قابلیت برای نسخهٔ رسمی ویندوز است':'نسخهٔ رسمی اینترنت آزاد روی این کامپیوتر پیدا نشد';
   $('#official-plan').textContent=info.active?`${info.planName} · ${fa(info.daysLeft)} روز باقی‌مانده`:'برای استفاده، لایسنس را در نسخهٔ رسمی روی همین کامپیوتر فعال کنید.';
   $('#official-expiry').textContent=info.active?`پایان اعتبار: ${new Date(info.expiresAt*1000).toLocaleString('fa-IR')}`:'';
@@ -58,6 +58,10 @@ async function refreshOfficialLicense(){
 }
 $('#official-check').addEventListener('click',()=>run(refreshOfficialLicense));
 $('#official-import').addEventListener('click',()=>run(async()=>{const button=$('#official-import');button.disabled=true;try{const result=await call('officialImport');showImportWarnings(result);await refresh();page('servers');notify(`${fa(result.count)} سرور از نسخهٔ رسمی وارد شد.`);}finally{button.disabled=false;}}));
+async function refreshOffline(){const info=await call('offlineStatus');$('#offline-status').textContent=info.active?`بستهٔ آفلاین فعال · ${fa(info.daysLeft)} روز باقی‌مانده`:'بستهٔ آفلاین معتبر وارد نشده است';$('#offline-validity').textContent=info.active?`پایان اعتبار: ${new Date(info.expiresAt*1000).toLocaleString('fa-IR')}`:'';}
+$('#offline-request').addEventListener('click',()=>run(async()=>{if(await call('offlineRequest'))notify('درخواست این نصب ذخیره شد؛ آن را به ویندوز ببرید.');}));
+$('#offline-export').addEventListener('click',()=>run(async()=>{const button=$('#offline-export');button.disabled=true;try{const info=await call('offlineExport');if(info){$('#offline-export-fingerprint').textContent=info.issuerFingerprint;notify(`بستهٔ رمزگذاری‌شده با ${fa(info.count)} سرور ساخته شد؛ آن را به اوبونتو ببرید.`);}}finally{button.disabled=false;}}));
+$('#offline-import').addEventListener('click',()=>run(async()=>{const result=await call('offlineImport');if(result){showImportWarnings(result);await refresh();await refreshOffline();page('servers');notify(`${fa(result.count)} سرور برای استفادهٔ مستقل وارد شد.`);}}));
 $('#settings-sharing').addEventListener('click',()=>page('sharing'));
 $('#sharing-show-password').addEventListener('change',e=>{$('#sharing-password').type=e.target.checked?'text':'password';});
 $('#sharing-refresh').addEventListener('click',()=>run(()=>refreshSharing(false)));

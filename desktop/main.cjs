@@ -40,6 +40,25 @@ if(hasLock) app.whenReady().then(async () => {
         case 'state': return await service.getState();
         case 'officialStatus': return await service.checkOfficialLicense();
         case 'officialImport': return await service.importOfficialServers();
+        case 'offlineStatus': return await service.checkOfflineLicense();
+        case 'offlineRequest': {
+          const result=await dialog.showSaveDialog(window,{defaultPath:'azadnet-ubuntu-request.json',filters:[{name:'AzadNet request',extensions:['json']}]});if(result.canceled)return null;
+          await fs.writeFile(result.filePath,await service.createOfflineRequest(),{mode:0o600});return true;
+        }
+        case 'offlineExport': {
+          const request=await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Ubuntu request',extensions:['json']}]});if(request.canceled)return null;
+          if((await fs.stat(request.filePaths[0])).size>16384)throw new Error('فایل درخواست بیش از حد بزرگ است.');
+          const exported=await service.exportOffline(await fs.readFile(request.filePaths[0],'utf8'));
+          const result=await dialog.showSaveDialog(window,{defaultPath:'azadnet-ubuntu.azadnet',filters:[{name:'Encrypted AzadNet transfer',extensions:['azadnet']}]});if(result.canceled)return null;
+          await fs.writeFile(result.filePath,exported.text,{mode:0o600});return exported.summary;
+        }
+        case 'offlineImport': {
+          const result=await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Encrypted AzadNet transfer',extensions:['azadnet']}]});if(result.canceled)return null;
+          if((await fs.stat(result.filePaths[0])).size>12*1024*1024)throw new Error('فایل انتقال بیش از حد بزرگ است.');
+          const text=await fs.readFile(result.filePaths[0],'utf8'),preview=await service.offlineTransfer.preview(text);
+          const approval=await dialog.showMessageBox(window,{type:'question',title:'تأیید صادرکنندهٔ بسته',message:'اثر انگشت را با مقداری که نسخهٔ ویندوز نمایش داده مقایسه کنید.',detail:`${preview.issuerFingerprint}\n\nتعداد سرور: ${preview.count}\nپایان اعتبار: ${new Date(preview.expiresAt*1000).toLocaleString('fa-IR')}\n\nاین بسته رسید محلی کلاینت مستقل است و لایسنس رسمی اوبونتوی ارائه‌دهنده نیست.`,buttons:['مطابقت دارد؛ وارد شود','لغو'],defaultId:1,cancelId:1});
+          if(approval.response!==0)return null;return await service.importOffline(text,preview.issuerFingerprint);
+        }
         case 'settings': return await service.saveSettings(args[0]);
         case 'sharing': return service.getSharing();
         case 'setSharing': return await service.updateSharing(args[0]);
