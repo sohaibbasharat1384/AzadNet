@@ -1,0 +1,19 @@
+{
+  "tags": [
+    "with_gvisor"
+  ],
+  "fragmentTestsPassed": true,
+  "version": "v1.19.30-azadnet-fragments-05fb40f89637",
+  "goamd64": "v1",
+  "arch": "amd64",
+  "platform": "windows",
+  "compiler": "go version go1.26.10 windows/amd64",
+  "sourceCommit": "05fb40f89637aa27d81b638bff765a6d57797cdb",
+  "supportsFragments": true,
+  "sourceRepo": "https://github.com/WhiteDNS/mihomo.git",
+  "linuxExecutionVerified": false,
+  "schemaVersion": 1,
+  "sha256": "75449e1846a55294530e7c6525f741608cce31097563e1c851aed1136bc21f08",
+  "cgoEnabled": false,
+  "desktopPatchSha256": "7fbe9062b59c8552c6344f12c95251f4cb093a47771ac4b10bb4d625029aebbf"
+}

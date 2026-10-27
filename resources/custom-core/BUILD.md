@@ -1,0 +1,33 @@
+The custom source is WhiteDNS/mihomo commit
+`05fb40f89637aa27d81b638bff765a6d57797cdb`:
+https://github.com/WhiteDNS/mihomo/tree/05fb40f89637aa27d81b638bff765a6d57797cdb
+
+`source-05fb40f89637.tar.gz` is an unmodified `git archive` of that commit,
+including its GPL-3.0 license and exact Go module declarations/checksums.
+
+Build from the repository root on Windows:
+
+```powershell
+git clone --no-checkout https://github.com/WhiteDNS/mihomo.git .tools/custom-core
+git -C .tools/custom-core checkout --detach 05fb40f89637aa27d81b638bff765a6d57797cdb
+./scripts/build-custom-core.ps1 -GoExecutable C:/path/to/go/bin/go.exe
+```
+
+Use a compatible Go 1.26 toolchain. The build performed during this investigation
+uses the maintainer's patched Go 1.26 distribution, reporting Go1.26.10. The exact
+archive digest, compiler executable digest, compiler version, source commit,
+target flags, tests and output hashes are recorded in `build-manifest.json` after
+a successful build. The Android APK reported Go1.26.8; these are compatible
+desktop builds, not byte-identical Android library reproductions.
+
+The script keeps dependency/build caches under `.tools`, verifies module content,
+runs the source's Fragment tests, then builds standalone Windows and Linux amd64
+CLI executables with CGO disabled, `with_gvisor`, baseline `GOAMD64=v1` and
+`-trimpath`. Windows can execute/test the Windows output; the Linux executable
+is cross-compiled and must additionally be tested on Ubuntu. The custom CLI
+uses Mihomo's regular HTTP controller; the FlClash wrapper is not included.
+
+`analysis/helpers/check-custom-fragments.cjs` is a local-only Windows integration
+check: malformed fragments must fail validation, and a CONNECT tunnel to a local
+TCP receiver must observe rewritten TLS record bytes plus staged writes. It
+does not modify a system proxy or routing and does not contact a public server.
