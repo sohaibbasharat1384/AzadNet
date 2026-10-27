@@ -11,6 +11,24 @@ This is a community reconstruction informed by the supplied InternetAzad369
 Android application and public WhiteVPN sources. It is not an official product
 or a complete reproduction of every Android feature.
 
+## Downloads
+
+Use [v0.2.1, the latest desktop release](https://github.com/sohaibbasharat1384/AzadNet/releases/tag/v0.2.1).
+
+| Platform | Package |
+| --- | --- |
+| Windows x64 | [Portable ZIP](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/AzadNet-0.2.1-windows-x64.zip) |
+| Ubuntu/Debian amd64 | [DEB installer](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/azadnet_0.2.1_amd64.deb) |
+| Linux x64 | [Portable tar.gz](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/AzadNet-0.2.1-linux-x64.tar.gz) |
+
+Verify downloads against [SHA256SUMS.txt](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/SHA256SUMS.txt).
+The four older releases retain their tagged source and change descriptions;
+ready-to-run packages are provided only for the latest version.
+
+Public packages omit the APK-derived GeoIP dataset and Python bytecode caches.
+Without an optional compatible GeoIP dataset, IP-based Iran bypass is omitted;
+domain/private-network rules still apply. See [resources/README.md](resources/README.md).
+
 ## Features
 
 - Persian, right-to-left desktop interface; server selection, latency checks,

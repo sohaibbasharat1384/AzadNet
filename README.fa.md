@@ -6,7 +6,16 @@
 
 ## اجرا
 
-ویندوز: فایل ZIP داخل dist را کامل استخراج کنید و AzadNet.exe را اجرا کنید. همهٔ فایل‌های کنار برنامه لازم‌اند. برای حالت پروکسی، دسترسی Administrator لازم نیست.
+بسته‌های آماده را از [ریلیز ۰.۲.۱](https://github.com/sohaibbasharat1384/AzadNet/releases/tag/v0.2.1) دریافت کنید:
+
+* [ویندوز x64، فایل ZIP](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/AzadNet-0.2.1-windows-x64.zip)
+* [اوبونتو/Debian amd64، فایل DEB](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/azadnet_0.2.1_amd64.deb)
+* [لینوکس x64، فایل tar.gz](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/AzadNet-0.2.1-linux-x64.tar.gz)
+* [SHA256 فایل‌ها](https://github.com/sohaibbasharat1384/AzadNet/releases/download/v0.2.1/SHA256SUMS.txt)
+
+چهار ریلیز قدیمی شامل سورس تگ همان نسخه و توضیح تغییرات‌اند؛ فایل‌های آماده فقط برای آخرین نسخه منتشر می‌شوند. بسته‌های عمومی دیتابیس GeoIP استخراج‌شده از APK و کش Python را ندارند. بدون دیتابیس سازگار، قانون IP-based ایران اعمال نمی‌شود؛ قواعد دامنه و شبکهٔ خصوصی باقی می‌مانند.
+
+ویندوز: فایل ZIP دانلودشده را کامل استخراج کنید و AzadNet.exe را اجرا کنید. همهٔ فایل‌های کنار برنامه لازم‌اند. برای حالت پروکسی، دسترسی Administrator لازم نیست.
 
 اوبونتو: بستهٔ azadnet_0.2.1_amd64.deb را نصب کنید:
 
