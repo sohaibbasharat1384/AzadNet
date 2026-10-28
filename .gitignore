@@ -17,6 +17,8 @@ profiles/
 *ubuntu-request*.json
 state.json
 runtime.yaml
+windscribe-account.bin
+windscribe-account.bin.*.tmp
 *.exe
 *.dll
 resources/core/GEOIP.dat
