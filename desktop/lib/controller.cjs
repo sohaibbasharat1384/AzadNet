@@ -17,7 +17,7 @@ class Controller{
   version(){return this.request('GET','/version');}
   configs(){return this.request('GET','/configs');}
   select(name,group='AZADNET'){return this.request('PUT',`/proxies/${encodeURIComponent(group)}`,{name});}
-  delay(name){return this.request('GET',`/proxies/${encodeURIComponent(name)}/delay?timeout=3000&url=${encodeURIComponent(this.delayUrl)}`,undefined,4500);}
+  delay(name,{timeout=3000}={}){return this.request('GET',`/proxies/${encodeURIComponent(name)}/delay?timeout=${timeout}&url=${encodeURIComponent(this.delayUrl)}`,undefined,timeout+1500);}
   traffic(){return this.request('GET','/connections').then(x=>({upload:x.uploadTotal||0,download:x.downloadTotal||0,connections:x.connections?.length||0}));}
 }
 module.exports={Controller};

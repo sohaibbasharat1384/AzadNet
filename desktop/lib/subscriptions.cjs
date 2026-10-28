@@ -1,7 +1,10 @@
 'use strict';
 const { parse } = require('yaml');
 const {parseExtraInput,augmentTransport}=require('./subscription-extra.cjs');
-const SUPPORTED = new Set(['ss','ssr','vmess','vless','trojan','hysteria2','tuic','socks5','http','wireguard','ssh','direct','anytls']);
+const {parseWireGuardConfig,isWireGuardConfig}=require('./wireguard-config.cjs');
+const {validateOpenVPNNode,parseOpenVPNConfig,isOpenVPNConfig}=require('./openvpn-config.cjs');
+const {validateIKEv2Profile}=require('./native-ikev2.cjs');
+const SUPPORTED = new Set(['ss','ssr','vmess','vless','trojan','hysteria2','tuic','socks5','http','wireguard','openvpn','ikev2','ssh','direct','anytls']);
 const MAX_TEXT = 8 * 1024 * 1024;
 function decode64(text) {
   const s = text.replace(/\s/g,'').replace(/-/g,'+').replace(/_/g,'/');
@@ -82,6 +85,10 @@ function validateProxy(value,index) {
   if(['vmess','vless','tuic'].includes(p.type)&&!(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.uuid||'')))throw new Error('Invalid UUID');
   if(['trojan','ss','hysteria2','tuic','anytls'].includes(p.type)&&typeof p.password!=='string')throw new Error('Password is missing');
   if(p.type==='ss'&&!p.cipher)throw new Error('Shadowsocks cipher is missing');
+  if(p.type==='openvpn')validateOpenVPNNode(p);
+  if(p.type==='ikev2')validateIKEv2Profile(p);
+  if(p['windscribe-mode']&&p.type==='wireguard'&&p['windscribe-mode']!=='wireguard')throw new Error('Invalid WireGuard transport mode');
+  if(p['windscribe-mode']&&!['wireguard','openvpn','ikev2'].includes(p.type))throw new Error('Invalid Windscribe transport');
   if(Object.hasOwn(p,'skip-cert-verify')&&typeof p['skip-cert-verify']!=='boolean')throw new Error('skip-cert-verify must be boolean');
   if(!Object.hasOwn(p,'skip-cert-verify')&&['http','socks5','trojan','vmess','vless','hysteria2','tuic','anytls'].includes(p.type))p['skip-cert-verify']=false;
   return p;
@@ -89,6 +96,8 @@ function validateProxy(value,index) {
 function parseSubscription(text) {
   if(typeof text!=='string'||Buffer.byteLength(text)>MAX_TEXT)throw new Error('Subscription exceeds 8 MiB');
   text=text.replace(/^\uFEFF/,'').trim(); if(!text)throw new Error('Subscription is empty');
+  if(isWireGuardConfig(text))return parseWireGuardConfig(text);
+  if(isOpenVPNConfig(text))return parseOpenVPNConfig(text);
   const extra=parseExtraInput(text);if(extra){if(!extra.proxies.length)throw new Error(extra.warnings.join('; ')||'No supported proxies found');return {proxies:extra.proxies.map((p,i)=>validateProxy(p,i+1)),warnings:extra.warnings};}
   let raw;
   if(/^proxies\s*:/m.test(text)||/^(?:\{|\[|---)/.test(text)){
