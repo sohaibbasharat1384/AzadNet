@@ -1,6 +1,6 @@
 {
   "name": "azadnet-desktop",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Independent Persian desktop client reconstructed from InternetAzad369 Android behavior",
   "main": "desktop/main.cjs",
   "private": true,

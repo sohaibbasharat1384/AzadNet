@@ -112,6 +112,10 @@ function renderWindscribe(){
   }
 }
 
+const windscribeCaptcha=new window.WindscribeCaptcha({
+  submit:input=>run(async()=>{try{await call('windscribeLoginContinue',input);}finally{await refreshWindscribeAccount();}}),
+  refresh:type=>run(async()=>{const pending=windscribeAccountState?.challenge;if(!pending)return;try{await call('windscribeCaptchaRefresh',{id:pending.id,type});}finally{await refreshWindscribeAccount();}})
+});
 function setWindscribeAccount(info){
   const wasLoggedIn=!!windscribeAccountState?.loggedIn;windscribeAccountState=info;
   if(!wasLoggedIn&&info.loggedIn)$('#windscribe-use-account').checked=true;
@@ -121,8 +125,8 @@ function setWindscribeAccount(info){
   f.hidden=logged;f.closest('.windscribe-account-card').classList.toggle('logged-in',logged);
   for(const name of ['accountUsername','accountPassword']){f.elements[name].disabled=!!pending||info.busy;f.elements[name].required=!pending;}
   f.elements.code2fa.disabled=info.busy||pending?.phase==='captcha';f.elements.code2fa.required=pending?.phase==='2fa';
-  $('#windscribe-account-captcha').hidden=pending?.phase!=='captcha';$('#windscribe-account-ascii').textContent=pending?.asciiArt||'';
-  f.elements.captchaSolution.required=pending?.phase==='captcha';f.elements.captchaSolution.disabled=info.busy||pending?.phase!=='captcha';
+  $('#windscribe-account-captcha').hidden=!['captcha','captcha-retry'].includes(pending?.phase);
+  windscribeCaptcha.render(pending,info.busy);
   f.elements.remember.disabled=info.busy||!!pending||!info.canRemember;
   if(!info.canRemember)f.elements.remember.checked=false;
   $('#windscribe-account-storage').textContent=info.canRemember?'نشست با ذخیره‌ساز امن سیستم رمزگذاری می‌شود.':'ذخیره‌ساز امن آماده نیست؛ ورود فقط تا زمان بستن برنامه حفظ می‌شود.';
@@ -141,8 +145,9 @@ async function refreshWindscribeAccount(){setWindscribeAccount(await call('winds
 const latinDigits=value=>value.replace(/[۰-۹]/g,c=>String(c.charCodeAt(0)-1776)).replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
 $('#windscribe-login-form').addEventListener('submit',event=>{
   event.preventDefault();const f=event.currentTarget,pending=windscribeAccountState?.challenge;
-  const input=pending?{id:pending.id,code2fa:latinDigits(f.elements.code2fa.value.trim()),captchaSolution:f.elements.captchaSolution.value.trim()}:{username:f.elements.accountUsername.value.trim(),password:f.elements.accountPassword.value,code2fa:latinDigits(f.elements.code2fa.value.trim()),remember:f.elements.remember.checked};
-  f.elements.accountPassword.value='';f.elements.code2fa.value='';f.elements.captchaSolution.value='';
+  if(['captcha','captcha-retry'].includes(pending?.phase)){windscribeCaptcha.open();return;}
+  const input=pending?{id:pending.id,code2fa:latinDigits(f.elements.code2fa.value.trim()) }:{username:f.elements.accountUsername.value.trim(),password:f.elements.accountPassword.value,code2fa:latinDigits(f.elements.code2fa.value.trim()),remember:f.elements.remember.checked};
+  f.elements.accountPassword.value='';f.elements.code2fa.value='';
   run(async()=>{try{await call(pending?'windscribeLoginContinue':'windscribeLogin',input);}finally{await refreshWindscribeAccount();}});
 });
 $('#windscribe-account-cancel').addEventListener('click',()=>run(async()=>{await call('windscribeLoginCancel');await refreshWindscribeAccount();}));

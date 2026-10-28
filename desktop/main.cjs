@@ -54,6 +54,7 @@ if(hasLock) app.whenReady().then(async () => {
         case 'windscribeAccount': return windscribeAccount.state();
         case 'windscribeLogin': return await windscribeAccount.begin(args[0]);
         case 'windscribeLoginContinue': return await windscribeAccount.continue(args[0]);
+        case 'windscribeCaptchaRefresh': return await windscribeAccount.refreshCaptcha(args[0]);
         case 'windscribeLoginCancel': return windscribeAccount.cancel();
         case 'windscribeAccountRefresh': return await windscribeAccount.refresh();
         case 'windscribeLogout': return await windscribeAccount.logout();
@@ -105,7 +106,7 @@ if(hasLock) app.whenReady().then(async () => {
         case 'stop': return await service.stop();
         case 'test': return await service.testServers();
         case 'speed': return await service.speedTest();
-        case 'logs': return service.getLogs();
+        case 'logs': return [...service.getLogs(),...windscribeAccount.getDiagnostics()].sort((a,b)=>a.time.localeCompare(b.time));
         case 'traffic': return await service.traffic();
         case 'openFile': {
           const result = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Profiles',extensions:['yaml','yml','json','txt','conf','ovpn']}]});
@@ -116,7 +117,7 @@ if(hasLock) app.whenReady().then(async () => {
         }
         case 'saveLogs': {
           const result = await dialog.showSaveDialog(window,{defaultPath:'azadnet-diagnostics.txt'});
-          if(!result.canceled) await fs.writeFile(result.filePath,JSON.stringify(service.getLogs(),null,2));
+          if(!result.canceled) await fs.writeFile(result.filePath,JSON.stringify([...service.getLogs(),...windscribeAccount.getDiagnostics()].sort((a,b)=>a.time.localeCompare(b.time)),null,2));
           return !result.canceled;
         }
         default: throw new Error('Unknown action');
