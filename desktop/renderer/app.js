@@ -1,14 +1,14 @@
 'use strict';
 const $=s=>document.querySelector(s);
 const api=window.azadnet;
-let state=null,startingAt=0,busy=false,toastTimer,lastTraffic=null;
+let state=null,startingAt=0,busy=false,toastTimer,lastTraffic=null,windscribeAccountState=null;
 const fa=n=>Number(n).toLocaleString('fa-IR');
 const titles={home:'اتصال امن',servers:'سرورها و اشتراک‌ها',settings:'تنظیمات اتصال',sharing:'اشتراک‌گذاری وی‌پی‌ان',license:'اشتراک و انتقال آفلاین',windscribe:'Windscribe · شش پروتکل',logs:'گزارش اتصال'};
 const presets={mahsa:'https://raw.githubusercontent.com/hiddify/hiddify-app/refs/heads/main/test.configs/mahsa#Mahsa',backup:'https://raw.githubusercontent.com/4n0nymou3/multi-proxy-config-fetcher/refs/heads/main/configs/proxy_configs.txt'};
 function notify(message,error=false){const translations={'Import a subscription or server first':'ابتدا یک اشتراک یا کانفیگ وارد کنید.','Disconnect before changing configuration':'برای تغییر تنظیمات ابتدا اتصال را قطع کنید.','Connection operation in progress':'عملیات اتصال در حال انجام است.','Server tests already running':'سنجش سرورها در حال انجام است.','Core controller did not become ready':'هسته آماده نشد؛ گزارش اتصال را بررسی کنید.'};const t=$('#toast');t.textContent=translations[String(message)]||String(message);t.classList.toggle('error',error);t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),6000);}
 async function call(action,...args){const result=await api.call(action,...args);if(result?.__error)throw new Error(result.__error);return result;}
 async function run(fn){try{return await fn();}catch(e){notify(e.message,true);return null;}}
-function page(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===`page-${name}`));document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('#page-title').textContent=titles[name];if(name==='settings')fillSettings();if(name==='sharing')run(()=>refreshSharing(true));if(name==='license')run(async()=>{await refreshOfficialLicense();await refreshOffline();});if(name==='logs')run(refreshLogs);if(name==='windscribe'){windscribeProtocolChanged();run(refreshWindscribeInfo);}}
+function page(name){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===`page-${name}`));document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page===name));$('#page-title').textContent=titles[name];if(name==='settings')fillSettings();if(name==='sharing')run(()=>refreshSharing(true));if(name==='license')run(async()=>{await refreshOfficialLicense();await refreshOffline();});if(name==='logs')run(refreshLogs);if(name==='windscribe'){windscribeProtocolChanged();run(refreshWindscribeInfo);run(refreshWindscribeAccount);}}
 document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>page(b.dataset.page)));
 function openImport(){ $('#import-error').textContent='';$('#import-dialog').showModal();$('#import-content').focus(); }
 ['home-import','add-subscription','empty-import'].forEach(id=>$('#'+id).addEventListener('click',openImport));
@@ -72,10 +72,11 @@ $('#sharing-regenerate').addEventListener('click',()=>run(async()=>{$('#sharing-
 let windscribeImporting=false;
 const windscribeLabels={wireguard:'WireGuard',udp:'OpenVPN UDP',tcp:'OpenVPN TCP',ikev2:'IKEv2',stealth:'Stealth',wstunnel:'WStunnel'};
 function windscribeProtocolChanged(){
-  const f=$('#windscribe-form'),mode=f.elements.protocol.value,ike=mode==='ikev2',wrapped=['stealth','wstunnel'].includes(mode),wg=mode==='wireguard';
-  $('#windscribe-ike-fields').hidden=!ike;$('#windscribe-credentials').hidden=wg;$('#windscribe-outer-fields').hidden=!wrapped;$('#windscribe-padding').hidden=mode!=='stealth';
+  const f=$('#windscribe-form'),mode=f.elements.protocol.value,ike=mode==='ikev2',wrapped=['stealth','wstunnel'].includes(mode),wg=mode==='wireguard',fromAccount=!!windscribeAccountState?.loggedIn&&f.elements.useAccount.checked&&!wg;
+  $('#windscribe-account-use-row').hidden=wg||!windscribeAccountState?.loggedIn;f.elements.useAccount.disabled=wg||!windscribeAccountState?.loggedIn;
+  $('#windscribe-ike-fields').hidden=!ike;$('#windscribe-credentials').hidden=wg||fromAccount;$('#windscribe-outer-fields').hidden=!wrapped;$('#windscribe-padding').hidden=mode!=='stealth';
   for(const name of ['name','server']){f.elements[name].required=ike;f.elements[name].disabled=!ike;}
-  for(const name of ['username','password']){f.elements[name].required=!wg;f.elements[name].disabled=wg;}
+  for(const name of ['username','password']){f.elements[name].required=!wg&&!fromAccount;f.elements[name].disabled=wg||fromAccount;}
   for(const name of ['outerServer','outerPort','outerSni','outerPadding'])f.elements[name].disabled=!wrapped;
   $('#windscribe-import').textContent=ike?'ذخیرهٔ پروفایل IKEv2':wg?'واردکردن فایل‌های .conf':'واردکردن فایل‌های .ovpn';
   $('#windscribe-protocol-help').textContent=ike?'میزبان و مشخصات IKEv2 را از Config Generator وارد کنید. هنگام اتصال، VPN سیستم فعال می‌شود.':wg?'فایل WireGuard با پسوند .conf را از حساب خود دریافت کنید. برای این فایل، نام کاربری و رمز جدا لازم نیست.':wrapped?'از فایل OpenVPN TCP استفاده کنید. میزبان تونل به‌صورت پیش‌فرض از همان فایل گرفته می‌شود؛ پورت و SNI را مطابق تنظیمات سرویس انتخاب کنید.':'فایل OpenVPN با پروتکل انتخاب‌شده را از Config Generator دریافت کنید و مشخصات همان کانفیگ را وارد کنید.';
@@ -110,6 +111,45 @@ function renderWindscribe(){
     row.append(info,remove);list.append(row);
   }
 }
+
+function setWindscribeAccount(info){
+  const wasLoggedIn=!!windscribeAccountState?.loggedIn;windscribeAccountState=info;
+  if(!wasLoggedIn&&info.loggedIn)$('#windscribe-use-account').checked=true;
+  if(!info.loggedIn)$('#windscribe-use-account').checked=false;
+  const pending=info.challenge,logged=info.loggedIn,f=$('#windscribe-login-form');
+  $('#windscribe-account-status').textContent=info.busy?'در حال انجام…':logged?'وارد شده‌اید':info.restoring?'نشست نیاز به بررسی دارد':pending?'تأیید ورود':'وارد نشده‌اید';
+  f.hidden=logged;f.closest('.windscribe-account-card').classList.toggle('logged-in',logged);
+  for(const name of ['accountUsername','accountPassword']){f.elements[name].disabled=!!pending||info.busy;f.elements[name].required=!pending;}
+  f.elements.code2fa.disabled=info.busy||pending?.phase==='captcha';f.elements.code2fa.required=pending?.phase==='2fa';
+  $('#windscribe-account-captcha').hidden=pending?.phase!=='captcha';$('#windscribe-account-ascii').textContent=pending?.asciiArt||'';
+  f.elements.captchaSolution.required=pending?.phase==='captcha';f.elements.captchaSolution.disabled=info.busy||pending?.phase!=='captcha';
+  f.elements.remember.disabled=info.busy||!!pending||!info.canRemember;
+  if(!info.canRemember)f.elements.remember.checked=false;
+  $('#windscribe-account-storage').textContent=info.canRemember?'نشست با ذخیره‌ساز امن سیستم رمزگذاری می‌شود.':'ذخیره‌ساز امن آماده نیست؛ ورود فقط تا زمان بستن برنامه حفظ می‌شود.';
+  $('#windscribe-account-submit').disabled=info.busy||info.restoring;
+  $('#windscribe-account-submit').textContent=pending?'تأیید و ادامهٔ ورود':'ورود به حساب';
+  $('#windscribe-account-cancel').hidden=!pending&&!info.busy;
+  $('#windscribe-account-challenge').textContent=pending?.message||'';
+  $('#windscribe-account-refresh').disabled=info.busy||!(logged||info.restoring);
+  $('#windscribe-account-logout').disabled=info.busy||!(logged||info.restoring);
+  const p=info.profile;
+  $('#windscribe-account-summary').textContent=p?('حساب: '+p.username+'\nپلن: '+(p.isPremium?'اشتراک پولی':'رایگان')+'\n'+(p.status===1?'حساب فعال است':'محدودیت حساب را در سایت بررسی کنید.')+'\nمصرف: '+(p.trafficUsed==null?'نامشخص':bytes(p.trafficUsed))+' از '+(p.unlimited?'نامحدود':p.trafficMax==null?'نامشخص':bytes(p.trafficMax))+(p.expiresAt?'\nپایان اشتراک: '+p.expiresAt:'')):info.restoring?'برای بررسی نشست، «تازه‌سازی حساب» را بزنید یا از حساب خارج شوید.':'با حساب خود وارد شوید تا وضعیت اشتراک را ببینید و مشخصات اتصال را مستقیم از Windscribe دریافت کنید.';
+  $('#windscribe-account-error').textContent=info.error||'';
+  windscribeProtocolChanged();
+}
+async function refreshWindscribeAccount(){setWindscribeAccount(await call('windscribeAccount'));}
+const latinDigits=value=>value.replace(/[۰-۹]/g,c=>String(c.charCodeAt(0)-1776)).replace(/[٠-٩]/g,c=>String(c.charCodeAt(0)-1632));
+$('#windscribe-login-form').addEventListener('submit',event=>{
+  event.preventDefault();const f=event.currentTarget,pending=windscribeAccountState?.challenge;
+  const input=pending?{id:pending.id,code2fa:latinDigits(f.elements.code2fa.value.trim()),captchaSolution:f.elements.captchaSolution.value.trim()}:{username:f.elements.accountUsername.value.trim(),password:f.elements.accountPassword.value,code2fa:latinDigits(f.elements.code2fa.value.trim()),remember:f.elements.remember.checked};
+  f.elements.accountPassword.value='';f.elements.code2fa.value='';f.elements.captchaSolution.value='';
+  run(async()=>{try{await call(pending?'windscribeLoginContinue':'windscribeLogin',input);}finally{await refreshWindscribeAccount();}});
+});
+$('#windscribe-account-cancel').addEventListener('click',()=>run(async()=>{await call('windscribeLoginCancel');await refreshWindscribeAccount();}));
+$('#windscribe-account-refresh').addEventListener('click',()=>run(async()=>{try{await call('windscribeAccountRefresh');}finally{await refreshWindscribeAccount();}}));
+$('#windscribe-account-logout').addEventListener('click',()=>run(async()=>{await call('windscribeLogout');$('#windscribe-login-form').reset();await refreshWindscribeAccount();}));
+$('#windscribe-use-account').addEventListener('change',windscribeProtocolChanged);
+
 $('#windscribe-protocol').addEventListener('change',windscribeProtocolChanged);
 $('#windscribe-generator').addEventListener('click',()=>run(()=>call('windscribeGenerator',$('#windscribe-form').elements.protocol.value)));
 $('#windscribe-check').addEventListener('click',()=>run(refreshWindscribeInfo));
@@ -121,7 +161,8 @@ $('#windscribe-form').addEventListener('submit',event=>{
     try{
       const protocol=f.elements.protocol.value;
       const options={protocol,name:f.elements.name.value.trim(),server:f.elements.server.value.trim()};
-      if(protocol!=='wireguard'){options.username=f.elements.username.value.trim();options.password=f.elements.password.value;}
+      options.useAccount=!!windscribeAccountState?.loggedIn&&f.elements.useAccount.checked&&protocol!=='wireguard';
+      if(protocol!=='wireguard'&&!options.useAccount){options.username=f.elements.username.value.trim();options.password=f.elements.password.value;}
       if(['stealth','wstunnel'].includes(protocol)){options.outerServer=f.elements.outerServer.value.trim();options.outerPort=Number(f.elements.outerPort.value);options.outerSni=f.elements.outerSni.value.trim();options.outerPadding=f.elements.outerPadding.checked;}
       const result=await call(protocol==='ikev2'?'windscribeIKEAdd':'windscribeImport',options);
       if(result){await refresh();$('#windscribe-import-result').textContent=fa(result.count)+' سرور وارد شد؛ '+fa(result.added)+' پروفایل تازه و '+fa(result.updated)+' به‌روزرسانی.'+(result.warnings?.length?'\n'+result.warnings.join('\n'):'');notify('پروفایل‌های Windscribe ذخیره شدند.');}
@@ -133,6 +174,6 @@ windscribeProtocolChanged();
 
 setInterval(()=>{if($('#page-sharing').classList.contains('active'))run(()=>refreshSharing(false));},5000);
 async function refresh(){state=await call('state');render();}
-api.on((event,payload)=>{if(event==='state'){state=payload;render();}else if(event==='traffic')renderTraffic(payload);else if(event==='log'&&$('#page-logs').classList.contains('active'))run(refreshLogs);});
+api.on((event,payload)=>{if(event==='state'){state=payload;render();}else if(event==='windscribe-account'){setWindscribeAccount(payload);}else if(event==='traffic')renderTraffic(payload);else if(event==='log'&&$('#page-logs').classList.contains('active'))run(refreshLogs);});
 setInterval(()=>{const elapsed=startingAt?Math.floor((Date.now()-startingAt)/1000):0;$('#elapsed').textContent=[Math.floor(elapsed/3600),Math.floor(elapsed/60)%60,elapsed%60].map(x=>String(x).padStart(2,'0')).join(':');if(state?.status==='connected')run(async()=>renderTraffic(await call('traffic')));},1000);
 run(refresh);

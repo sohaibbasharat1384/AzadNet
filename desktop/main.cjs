@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, safeStorage, Menu, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { Service } = require('./lib/service.cjs');
 const {PROTOCOLS}=require('./lib/windscribe-import.cjs');
-let window, service, quitting = false;
+const {WindscribeAccount}=require('./lib/windscribe-account.cjs');
+let window, service, windscribeAccount, quitting = false;
 if(process.env.AZADNET_DATA_DIR) app.setPath('userData',path.resolve(process.env.AZADNET_DATA_DIR));
 const hasLock=app.requestSingleInstanceLock();
 if(!hasLock) app.quit();
@@ -34,6 +35,15 @@ if(hasLock) app.whenReady().then(async () => {
     if (window && !window.isDestroyed()) window.webContents.send('azadnet-event',event,payload);
   }});
   await service.init();
+  windscribeAccount=new WindscribeAccount({dataDir:path.join(app.getPath('userData'),'profiles'),vault:{
+    available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text'),
+    encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes)
+  },emit:payload=>{if(window&&!window.isDestroyed())window.webContents.send('azadnet-event','windscribe-account',payload);}});
+  async function windscribeOptions(input,protocol=input?.protocol){
+    service.requireIdle();const options={...input,protocol};delete options.accountId;
+    if(input?.useAccount===true&&protocol!=='wireguard')Object.assign(options,await windscribeAccount.credentials(protocol));
+    return options;
+  }
   ipcMain.handle('azadnet', async (e,action,...args) => {
     if(e.sender !== window.webContents) throw new Error('Untrusted sender');
     try {
@@ -41,8 +51,14 @@ if(hasLock) app.whenReady().then(async () => {
       switch(action) {
         case 'state': return await service.getState();
         case 'windscribeInfo': return await service.windscribeAvailability();
+        case 'windscribeAccount': return windscribeAccount.state();
+        case 'windscribeLogin': return await windscribeAccount.begin(args[0]);
+        case 'windscribeLoginContinue': return await windscribeAccount.continue(args[0]);
+        case 'windscribeLoginCancel': return windscribeAccount.cancel();
+        case 'windscribeAccountRefresh': return await windscribeAccount.refresh();
+        case 'windscribeLogout': return await windscribeAccount.logout();
         case 'windscribeTest': return await service.testServers({source:'windscribe'});
-        case 'windscribeIKEAdd': return await service.importWindscribe([],{...args[0],protocol:'ikev2'});
+        case 'windscribeIKEAdd': return await service.importWindscribe([],await windscribeOptions(args[0],'ikev2'));
         case 'windscribeGenerator': {
           const protocol=args[0]==='ikev2'?'ikev2':args[0]==='wireguard'?'wireguard':'openvpn';
           await shell.openExternal(`https://windscribe.com/myaccount/config-generator#${protocol}`);return true;
@@ -52,7 +68,7 @@ if(hasLock) app.whenReady().then(async () => {
           const result=await dialog.showOpenDialog(window,{properties:['openFile','multiSelections'],filters:[{name:options.protocol==='wireguard'?'WireGuard':'OpenVPN',extensions:[options.protocol==='wireguard'?'conf':'ovpn']}]});
           if(result.canceled)return null;if(result.filePaths.length>32)throw new Error('هر بار حداکثر ۳۲ فایل انتخاب کنید.');
           const files=[];for(const file of result.filePaths){const stat=await fs.stat(file);if(!stat.isFile()||stat.size>256*1024)throw new Error('فایل کانفیگ باید حداکثر ۲۵۶ کیلوبایت باشد.');files.push({name:path.basename(file),text:await fs.readFile(file,'utf8')});}
-          return await service.importWindscribe(files,options);
+          return await service.importWindscribe(files,await windscribeOptions(options));
         }
         case 'officialStatus': return await service.checkOfficialLicense();
         case 'officialImport': return await service.importOfficialServers();
@@ -108,11 +124,13 @@ if(hasLock) app.whenReady().then(async () => {
     } catch(error) { return {__error:error.message}; }
   });
   createWindow();
+  void windscribeAccount.init();
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', e => {
   if(quitting || !service) return;
   e.preventDefault(); quitting=true;
+  windscribeAccount?.shutdown();
   Promise.resolve(service.shutdown()).finally(() => app.quit());
 });
 process.on('uncaughtException', error => { console.error(error); if(service) Promise.resolve(service.shutdown()).finally(()=>app.exit(1)); else app.exit(1); });

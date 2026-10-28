@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.3.0** (local Windscribe build; published downloads below are 0.2.1).
+version: **0.3.1** (local Windscribe account build; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -115,6 +115,44 @@ node --test --test-concurrency=1 tests/*.test.cjs
 
 ## Windscribe setup
 
+Version 0.3.1 adds direct account login on the Windscribe page. Enter your account
+username/password in the **account** form, complete the provider's ASCII CAPTCHA
+yourself if requested, and enter a six-digit 2FA code when required. Persian and
+Arabic digits in the 2FA field are converted to ASCII. Login errors are not
+automatically retried. The account summary shows plan, traffic and expiry when
+the provider returns those fields.
+
+The account password is used only during login; it is not saved in settings or
+logs. **Remember me** stores only the session token and an account identifier,
+encrypted by Electron safeStorage. On Windows this uses DPAPI. On Linux a
+working system secret store is required; the app refuses the `basic_text`
+fallback and offers memory-only login instead. A restored session is checked
+with the API before the UI calls it logged in. Tokens and connection credentials
+are never returned in renderer state.
+
+After login, **use connection credentials from the signed-in account** is
+selected for OpenVPN UDP/TCP, IKEv2, Stealth and WStunnel. The main process fetches
+the applicable OpenVPN/IKEv2 credentials when you import a configuration. You can
+turn this off and enter configuration credentials manually. WireGuard still uses
+the keys in its `.conf` file. Login does not automatically import server locations;
+the generated file or IKEv2 hostname is still required, and access remains subject
+to Windscribe's plan/location permissions. Imported VPN configuration credentials
+remain in private profiles as before; they are separate from the account password.
+
+**Log out** attempts to revoke the current API session and removes the locally
+saved token. If remote revocation cannot be confirmed, the UI says so. Manually
+imported profiles and their active connection remain available after account
+logout; remove/disconnect them separately when desired.
+
+The original interoperability code follows the public request/response contracts
+in [Windscribe/wsnet 1.5.43](https://github.com/Windscribe/wsnet/tree/544a5365cf5123a73b344c69e7a393c81c8fb622)
+and the public client-authentication parameters in
+[Windscribe's extension SDK](https://github.com/Windscribe/browser-extension/blob/ed83749ad1a4163f24e39572fc9597a4091a0ee7/modules/ws-api-client/src/api/getMandatoryParams.ts).
+The published client/signature salts are protocol constants, not a user's
+credentials or a private developer API key. Requests identify this app as AzadNet,
+use only HTTPS to `api.windscribe.com`, retain certificate validation, and refuse
+redirects. This is not an official Windscribe client or a guaranteed stable API.
+
 Open the **Windscribe** page and use its Config Generator button. Manual
 configurations require an eligible paid Windscribe plan and access to the chosen
 location. Use the generated configuration credentials, not your account password.
@@ -158,7 +196,9 @@ Windscribe profiles are independent of InternetAzad license expiry.
 Validation used synthetic configs for all six import modes, mocked native VPN
 lifecycle tests, actual local TLS/WebSocket byte transfers through the packaged
 helper, real Mihomo local proxy tests, and an isolated Electron UI smoke test.
-No live Windscribe credentials were supplied. Live provider compatibility and
+The login security-token preflight was also accepted by the real API with a
+synthetic identifier; no password or account Session login was sent. No live
+Windscribe credentials were supplied. Live account login/provider compatibility and
 native IKEv2 on Windows/Ubuntu remain to be verified with a user's configuration;
 the Linux executables were cross-compiled, not executed on this Windows host.
 
