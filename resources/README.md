@@ -19,10 +19,19 @@ build inputs. Obtain these before packaging a fresh checkout.
    and `resources/linux-core/`. Without it the client omits the GeoIP-based Iran
    bypass rule; domain-based and explicit private-network rules still work.
    Obtain data with known provenance and suitable redistribution terms.
+5. Build the official Windscribe tunnel helper from the pinned clean commit:
+   `git clone https://github.com/Windscribe/wstunnel.git .tools/windscribe-wstunnel`,
+   `git -C .tools/windscribe-wstunnel checkout --detach e6c325eed099e746ee98f80de7b827e942416d20`,
+   then run `scripts/build-windscribe-tunnel.ps1` with the Go toolchain. This emits
+   Windows/Linux binaries and their hash manifests under `resources/windscribe/`.
+   The packager requires the platform binary to match its manifest and includes
+   the unmodified source archive and license. Linux helper mode is executable.
 
 The local development packages used GeoIP data from the supplied Android APK.
 That dataset's upstream provenance was not established, so it is not published
-in this source repository. No original APK or vendor activation code is included.
+in this source repository. The packager excludes it from new runtime packages as
+well; add your own compatible dataset after installation if desired. No original
+APK or vendor activation code is included.
 
 Recorded manifests describe the locally built artifacts, which are not tracked
 in Git. A fresh build regenerates manifests for the actual output; the app only

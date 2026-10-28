@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.2.1**.
+version: **0.3.0** (local Windscribe build; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -31,6 +31,9 @@ domain/private-network rules still apply. See [resources/README.md](resources/RE
 
 ## Features
 
+- A separate Windscribe provider with WireGuard, OpenVPN UDP, OpenVPN TCP,
+  IKEv2, Stealth and WStunnel. Import your own generated configuration files;
+  this does not sign in to, purchase or generate a Windscribe subscription.
 - Persian, right-to-left desktop interface; server selection, latency checks,
   traffic counters and a bounded HTTPS speed test through the local proxy.
 - Clash YAML/JSON, Xray JSON, Base64 subscriptions and common connection URIs.
@@ -76,6 +79,9 @@ git clone --no-checkout https://github.com/WhiteDNS/mihomo.git .tools/custom-cor
 git -C .tools/custom-core checkout --detach 05fb40f89637aa27d81b638bff765a6d57797cdb
 ./scripts/build-custom-core.ps1 -GoExecutable C:/path/to/compatible-go/bin/go.exe
 ./scripts/stage-custom-core.ps1
+git clone https://github.com/Windscribe/wstunnel.git .tools/windscribe-wstunnel
+git -C .tools/windscribe-wstunnel checkout --detach e6c325eed099e746ee98f80de7b827e942416d20
+./scripts/build-windscribe-tunnel.ps1 -GoExecutable C:/path/to/compatible-go/bin/go.exe
 ```
 
 The core build needs a compatible Go 1.26 toolchain. See
@@ -94,11 +100,76 @@ rebuilding the same version. No compiled runtime binaries are tracked in Git.
 The matching upstream core source archive, patch, manifests and licenses are
 included for provenance and rebuilds.
 
+The tunnel build applies `scripts/windscribe-tunnel.patch` to the pinned source.
+It keeps randomized TLS 1.3 hybrid groups consistent with their initial key
+shares, avoiding uTLS 1.8.2 failures on HelloRetryRequest. A generated-spec test
+covers both randomized ClientHello variants; the original source archive plus
+this patch describe the shipped helper. The build restores its source checkout.
+
 To run local real-core integration tests after staging the Windows core:
 
 ```powershell
 $env:AZADNET_TEST_REAL_CORE = '1'
 node --test --test-concurrency=1 tests/*.test.cjs
+```
+
+## Windscribe setup
+
+Open the **Windscribe** page and use its Config Generator button. Manual
+configurations require an eligible paid Windscribe plan and access to the chosen
+location. Use the generated configuration credentials, not your account password.
+See [Windscribe's configuration generators](https://windscribe.com/features/config-generators).
+
+| Mode | Input | Connection backend |
+| --- | --- | --- |
+| WireGuard | One or more native `.conf` files | Mihomo WireGuard |
+| OpenVPN UDP / TCP | Matching `.ovpn` files plus configuration username/password | Mihomo OpenVPN |
+| IKEv2 | Generator hostname and IKEv2 credentials | Windows user VPN / Ubuntu NetworkManager strongSwan |
+| Stealth | OpenVPN TCP file, credentials, outer hostname/port and optional SNI | Official Windscribe tunnel helper, TLS mode |
+| WStunnel | OpenVPN TCP file, credentials, outer hostname/port and optional SNI | Official Windscribe tunnel helper, WebSocket mode |
+
+The app accepts up to 32 files at once. Reimporting the same profile filename
+updates that profile and preserves its selected server name. Use different
+filenames to retain the same location under multiple protocols. Script directives
+and external credential/key paths are rejected; unsupported settings fail with
+their line number rather than executing profile code.
+
+WireGuard and OpenVPN modes use the existing local proxy or TUN settings.
+IKEv2 always establishes a system VPN; Mihomo TUN is disabled for that connection.
+Its system traffic does not follow the app's domain/Iran split rules, and the
+displayed counters only cover the local proxy. Ubuntu needs NetworkManager,
+`network-manager-strongswan`, `libcharon-extra-plugins`, Python 3 and `python3-dbus`;
+the DEB declares these dependencies. Run the Electron interface without sudo.
+Both native backends validate the server through the system certificate trust
+store and only create/remove their own randomly named profile.
+
+Stealth and WStunnel must point to an endpoint supporting that transport; a TCP
+OpenVPN server is not automatically a TLS/WebSocket endpoint. The official helper
+does not authenticate the outer TLS certificate. Authentication remains in the
+inner OpenVPN CA/server certificate checks; the importer preserves inline CA and
+`verify-x509-name` constraints, and the patched core enforces the name constraint.
+The resolved outer address is excluded from TUN routing to prevent a tunnel loop.
+
+Bulk latency tests skip unselected IKEv2/Stealth/WStunnel profiles so a test does
+not change system VPN routes. Select and connect each such profile individually;
+connection succeeds only after an HTTPS response through that selected route.
+Windscribe profiles are independent of InternetAzad license expiry.
+
+Validation used synthetic configs for all six import modes, mocked native VPN
+lifecycle tests, actual local TLS/WebSocket byte transfers through the packaged
+helper, real Mihomo local proxy tests, and an isolated Electron UI smoke test.
+No live Windscribe credentials were supplied. Live provider compatibility and
+native IKEv2 on Windows/Ubuntu remain to be verified with a user's configuration;
+the Linux executables were cross-compiled, not executed on this Windows host.
+
+Optional local helper integration test (no provider account):
+
+```powershell
+go build -o .tools/windscribe-echo.exe tests/fixtures/windscribe-echo.go
+$env:AZADNET_TEST_REAL_TUNNEL = '1'
+$env:AZADNET_ECHO_FIXTURE = "$PWD/.tools/windscribe-echo.exe"
+node --test tests/windscribe-runtime.test.cjs
+node_modules/electron/dist/electron.exe tests/ui/windscribe-smoke.cjs
 ```
 
 ## Runtime permissions

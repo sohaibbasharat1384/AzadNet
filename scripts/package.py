@@ -11,22 +11,32 @@ DIST.mkdir(exist_ok=True)
 def sha(path): return hashlib.file_digest(path.open('rb'),'sha256').hexdigest()
 def app_contents(target,linux=False):
     app=target/'resources/app'
-    shutil.copytree(ROOT/'desktop',app/'desktop',dirs_exist_ok=True)
+    shutil.copytree(ROOT/'desktop',app/'desktop',dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
     (app/'package.json').write_text(json.dumps({'name':'azadnet-desktop','version':VERSION,'main':'desktop/main.cjs','dependencies':{'yaml':'2.9.1'}}),encoding='utf8')
     shutil.copytree(ROOT/'node_modules/yaml',app/'node_modules/yaml',dirs_exist_ok=True)
     core=target/'resources/core';core.mkdir(parents=True,exist_ok=True)
     origin=ROOT/('resources/linux-core' if linux else 'resources/core')
+    core_identity=json.loads((origin/'build.json').read_text(encoding='utf-8-sig'))
+    if core_identity['sha256']!=sha(origin/('mihomo' if linux else 'mihomo.exe')) or not core_identity.get('supportsOpenVPNIdentity'):raise SystemExit('Stage the verified OpenVPN identity-capable core first')
+    if core_identity['desktopPatchSha256']!=sha(ROOT/'scripts/custom-core-desktop.patch'):raise SystemExit('Core source patch identity mismatch')
     for file in origin.iterdir():
-        if file.is_file(): shutil.copy2(file,core/file.name)
+        if file.is_file() and file.name!='GEOIP.dat': shutil.copy2(file,core/file.name)
+    tunnel_origin=ROOT/'resources/windscribe'/('linux' if linux else 'windows')
+    tunnel_name='windscribe-tunnel' if linux else 'windscribe-tunnel.exe'
+    tunnel_identity=json.loads((tunnel_origin/'build.json').read_text(encoding='utf-8-sig'))
+    if tunnel_identity['sha256']!=sha(tunnel_origin/tunnel_name):raise SystemExit('Windscribe tunnel SHA256 mismatch')
+    if not tunnel_identity.get('tlsCompatibilityTestsPassed') or tunnel_identity.get('tunnelPatchSha256')!=sha(ROOT/'scripts/windscribe-tunnel.patch'):raise SystemExit('Rebuild the tunnel helper with the TLS compatibility patch')
+    shutil.copytree(tunnel_origin,target/'resources/windscribe'/tunnel_origin.name)
+    shutil.copy2(ROOT/'resources/windscribe/source-e6c325eed099.tar.gz',target/'resources/windscribe/source-e6c325eed099.tar.gz')
     shutil.copytree(ROOT/'resources/licenses',target/'licenses',dirs_exist_ok=True)
-    for name in ('README.fa.md','THIRD_PARTY_NOTICES.md','LICENSE'):
+    for name in ('README.md','README.fa.md','CHANGELOG.fa.md','THIRD_PARTY_NOTICES.md','LICENSE'):
         if (ROOT/name).exists():shutil.copy2(ROOT/name,target/name)
     shutil.copytree(ROOT/'resources/custom-core',target/'core-source',dirs_exist_ok=True,ignore=shutil.ignore_patterns('mihomo-windows-amd64.exe','mihomo-linux-amd64'))
     source=target/'source'
     source.mkdir(exist_ok=True)
     for name in ('desktop','scripts','tests'):
-        shutil.copytree(ROOT/name,source/name,dirs_exist_ok=True)
-    for name in ('package.json','package-lock.json','README.fa.md','THIRD_PARTY_NOTICES.md','LICENSE'):
+        shutil.copytree(ROOT/name,source/name,dirs_exist_ok=True,ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+    for name in ('package.json','package-lock.json','README.md','README.fa.md','CHANGELOG.fa.md','THIRD_PARTY_NOTICES.md','LICENSE'):
         if(ROOT/name).exists():shutil.copy2(ROOT/name,source/name)
 
 win=DIST/f'AzadNet-{VERSION}-windows-x64'
@@ -90,7 +100,7 @@ desktop='[Desktop Entry]\nName=AzadNet\nName[fa]=آزادنت\nComment=Persian d
 
 def mode_for(name):
     if name.endswith('chrome-sandbox'):return 0o4755
-    if Path(name).name in ('azadnet','mihomo','chrome_crashpad_handler','run-azadnet.sh','enable-tun.sh'):return 0o755
+    if Path(name).name in ('azadnet','mihomo','windscribe-tunnel','chrome_crashpad_handler','run-azadnet.sh','enable-tun.sh'):return 0o755
     return 0o644
 def add_file(tar,file,arcname):
     info=tar.gettarinfo(str(file),arcname)
@@ -112,7 +122,7 @@ Section: net
 Priority: optional
 Architecture: amd64
 Maintainer: AzadNet local build
-Depends: libcap2-bin, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libdrm2, libgbm1, libasound2t64 | libasound2, libx11-xcb1, libcups2t64 | libcups2
+Depends: python3, python3-dbus, network-manager, network-manager-strongswan, libcharon-extra-plugins, libcap2-bin, libgtk-3-0, libnss3, libxss1, libxtst6, libatspi2.0-0, libdrm2, libgbm1, libasound2t64 | libasound2, libx11-xcb1, libcups2t64 | libcups2
 Description: Independent Persian desktop proxy client
  Reconstructed from observed InternetAzad369 Android behavior.
  Includes Mihomo and an Electron interface. TUN needs network privileges.

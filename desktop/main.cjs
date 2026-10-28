@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, shell, Menu, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 const { Service } = require('./lib/service.cjs');
+const {PROTOCOLS}=require('./lib/windscribe-import.cjs');
 let window, service, quitting = false;
 if(process.env.AZADNET_DATA_DIR) app.setPath('userData',path.resolve(process.env.AZADNET_DATA_DIR));
 const hasLock=app.requestSingleInstanceLock();
@@ -22,13 +23,14 @@ function createWindow() {
   window.webContents.on('will-navigate', e => e.preventDefault());
 }
 if(hasLock) app.whenReady().then(async () => {
-  let fragmentsSupported=false;
+  let fragmentsSupported=false,openvpnIdentitySupported=false;
   try {
     const identity=JSON.parse(await fs.readFile(path.join(path.dirname(corePath),'build.json'),'utf8'));
     const digest=crypto.createHash('sha256').update(await fs.readFile(corePath)).digest('hex');
     fragmentsSupported=identity.supportsFragments===true && identity.sha256===digest;
+    openvpnIdentitySupported=identity.supportsOpenVPNIdentity===true && identity.sha256===digest;
   } catch {}
-  service = new Service({ dataDir:path.join(app.getPath('userData'),'profiles'),corePath,fragmentsSupported,emit:(event,payload) => {
+  service = new Service({ dataDir:path.join(app.getPath('userData'),'profiles'),corePath,fragmentsSupported,openvpnIdentitySupported,emit:(event,payload) => {
     if (window && !window.isDestroyed()) window.webContents.send('azadnet-event',event,payload);
   }});
   await service.init();
@@ -38,6 +40,20 @@ if(hasLock) app.whenReady().then(async () => {
       if(service.sharingUpdating&&!['state','sharing','logs','traffic'].includes(action))throw new Error('در حال اعمال تنظیمات اشتراک‌گذاری؛ کمی صبر کنید.');
       switch(action) {
         case 'state': return await service.getState();
+        case 'windscribeInfo': return await service.windscribeAvailability();
+        case 'windscribeTest': return await service.testServers({source:'windscribe'});
+        case 'windscribeIKEAdd': return await service.importWindscribe([],{...args[0],protocol:'ikev2'});
+        case 'windscribeGenerator': {
+          const protocol=args[0]==='ikev2'?'ikev2':args[0]==='wireguard'?'wireguard':'openvpn';
+          await shell.openExternal(`https://windscribe.com/myaccount/config-generator#${protocol}`);return true;
+        }
+        case 'windscribeImport': {
+          const options=args[0];if(!options||!PROTOCOLS.includes(options.protocol)||options.protocol==='ikev2')throw new Error('پروتکل فایل Windscribe را انتخاب کنید.');
+          const result=await dialog.showOpenDialog(window,{properties:['openFile','multiSelections'],filters:[{name:options.protocol==='wireguard'?'WireGuard':'OpenVPN',extensions:[options.protocol==='wireguard'?'conf':'ovpn']}]});
+          if(result.canceled)return null;if(result.filePaths.length>32)throw new Error('هر بار حداکثر ۳۲ فایل انتخاب کنید.');
+          const files=[];for(const file of result.filePaths){const stat=await fs.stat(file);if(!stat.isFile()||stat.size>256*1024)throw new Error('فایل کانفیگ باید حداکثر ۲۵۶ کیلوبایت باشد.');files.push({name:path.basename(file),text:await fs.readFile(file,'utf8')});}
+          return await service.importWindscribe(files,options);
+        }
         case 'officialStatus': return await service.checkOfficialLicense();
         case 'officialImport': return await service.importOfficialServers();
         case 'offlineStatus': return await service.checkOfflineLicense();
@@ -76,7 +92,7 @@ if(hasLock) app.whenReady().then(async () => {
         case 'logs': return service.getLogs();
         case 'traffic': return await service.traffic();
         case 'openFile': {
-          const result = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Profiles',extensions:['yaml','yml','json','txt','conf']}]});
+          const result = await dialog.showOpenDialog(window,{properties:['openFile'],filters:[{name:'Profiles',extensions:['yaml','yml','json','txt','conf','ovpn']}]});
           if(result.canceled) return null;
           const stat = await fs.stat(result.filePaths[0]);
           if(stat.size>5*1024*1024) throw new Error('حداکثر اندازهٔ فایل ۵ مگابایت است.');
