@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.3.4** (local Windscribe login contract fix; Windows account login confirmed by the user; published downloads below are 0.2.1).
+version: **0.3.5** (local Windscribe account server selection and connection; a live Windows OpenVPN TCP HTTPS transfer was verified; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -115,6 +115,28 @@ node --test --test-concurrency=1 tests/*.test.cjs
 
 ## Windscribe setup
 
+After signing in, **Your account servers** loads the authenticated location and
+server inventory. Filter by country/region or search for a city, choose one of
+the six available protocols and its advertised compatible port, then click
+**Connect** beside a location. No downloaded configuration file is required for
+this account flow. Locations without nodes in the account's authenticated
+inventory, offline locations and unavailable protocol backends cannot connect.
+The account and inventory are checked again before each new connection.
+
+WireGuard generates an installation key pair and registers it with the account
+only when connecting. Existing key slots are never automatically deleted; if the
+provider reports a full key quota, manage the account's old keys or select another
+protocol. OpenVPN, IKEv2 and the wrapped transports obtain their connection
+credentials from the API, separately from the account login password.
+
+The active account profile stays in memory and is excluded from saved profile
+JSON. The generated private core configuration is removed after disconnect,
+shutdown and next startup. OpenVPN templates with a client rekey timer retain
+their maximum session age through a disconnect deadline, because the core does
+not expose a client-initiated rekey timer; server-initiated rekeys remain supported.
+The user can connect again after that deadline. Manual file import remains an
+independent option below the account server list.
+
 Direct account login is on the Windscribe page. Enter your account
 username/password in the **account** form, complete the provider's CAPTCHA
 yourself if requested, and enter a six-digit 2FA code when required. Persian and
@@ -157,41 +179,44 @@ uses `linux_deb_x64`. The anonymous header fixed preflight dispatch in a live
 synthetic test, but the subsequent real-account attempt still returned 1337.
 After the complete header/version alignment, the user confirmed successful
 Windows account login; the subsequent authenticated Session GET returned 200.
-This validates account login/refresh, not a live VPN connection to a Windscribe
-server. The new Ubuntu binary/account flow has not been executed on Ubuntu.
+That 0.3.4 check validated account login/refresh. Version 0.3.5 additionally verified
+a live OpenVPN TCP connection and 16 KiB HTTPS transfer through its local proxy.
+The new Ubuntu binary/account flow has not been executed on Ubuntu.
 
 The account password is used only during login; it is not saved in settings or
-logs. **Remember me** stores only the session token and an account identifier,
+logs. **Remember me** stores the session token, an account identifier and, when
+created, that account's WireGuard device key pair,
 encrypted by Electron safeStorage. On Windows this uses DPAPI. On Linux a
 working system secret store is required; the app refuses the `basic_text`
 fallback and offers memory-only login instead. A restored session is checked
 with the API before the UI calls it logged in. Tokens and connection credentials
 are never returned in renderer state.
 
-After login, **use connection credentials from the signed-in account** is
+For optional manual imports, **use connection credentials from the signed-in account** is
 selected for OpenVPN UDP/TCP, IKEv2, Stealth and WStunnel. The main process fetches
 the applicable OpenVPN/IKEv2 credentials when you import a configuration. You can
-turn this off and enter configuration credentials manually. WireGuard still uses
-the keys in its `.conf` file. Login does not automatically import server locations;
-the generated file or IKEv2 hostname is still required, and access remains subject
-to Windscribe's plan/location permissions. Imported VPN configuration credentials
+turn this off and enter configuration credentials manually. A manual WireGuard
+file uses the keys in its `.conf` file. These manual imports are separate from
+the account server selector above; access remains subject to Windscribe's
+plan/location permissions. Imported VPN configuration credentials
 remain in private profiles as before; they are separate from the account password.
 
 **Log out** attempts to revoke the current API session and removes the locally
-saved token. If remote revocation cannot be confirmed, the UI says so. Manually
+saved token and device keys, disconnects its active automatic connection and
+removes the in-memory account profile. If remote revocation cannot be confirmed,
+the UI says so. Manually
 imported profiles and their active connection remain available after account
 logout; remove/disconnect them separately when desired.
 
-The original interoperability code follows the public request/response contracts
+The account/server interoperability code follows the public request/response contracts
 in [Windscribe/wsnet 1.5.43](https://github.com/Windscribe/wsnet/tree/544a5365cf5123a73b344c69e7a393c81c8fb622)
-and the public client-authentication parameters in
-[Windscribe's extension SDK](https://github.com/Windscribe/browser-extension/blob/ed83749ad1a4163f24e39572fc9597a4091a0ee7/modules/ws-api-client/src/api/getMandatoryParams.ts).
-The published client/signature salts are protocol constants, not a user's
+and [the released desktop SDK contract](https://github.com/Windscribe/Desktop-App/releases/tag/v2.24.13).
+The published signature salt is a protocol constant, not a user's
 credentials or a private developer API key. Requests identify this app as AzadNet,
 use only HTTPS to `api.windscribe.com`, retain certificate validation, and refuse
 redirects. This is not an official Windscribe client or a guaranteed stable API.
 
-Open the **Windscribe** page and use its Config Generator button. Manual
+For manual file import, use the **Windscribe** page's Config Generator button. Manual
 configurations require an eligible paid Windscribe plan and access to the chosen
 location. Use the generated configuration credentials, not your account password.
 See [Windscribe's configuration generators](https://windscribe.com/features/config-generators).
@@ -234,11 +259,13 @@ Windscribe profiles are independent of InternetAzad license expiry.
 Validation used synthetic configs for all six import modes, mocked native VPN
 lifecycle tests, actual local TLS/WebSocket byte transfers through the packaged
 helper, real Mihomo local proxy tests, and an isolated Electron UI smoke test.
-The login security-token preflight was also accepted by the real API with a
-synthetic identifier; no password or account Session login was sent. No live
-Windscribe credentials were supplied. Live account login/provider compatibility and
-native IKEv2 on Windows/Ubuntu remain to be verified with a user's configuration;
-the Linux executables were cross-compiled, not executed on this Windows host.
+The user confirmed real Windows account login. Read-only authenticated inventory,
+port-map and template requests were verified, followed by a real Windows OpenVPN
+TCP connection and 16 KiB of verified HTTPS through that isolated proxy. This test
+used no system TUN/LAN sharing and removed its generated credentials/configuration.
+Live WireGuard key registration, UDP, IKEv2 and wrapped provider connections were
+not part of that live account test. The Linux executables were cross-compiled,
+not executed on this Windows host.
 
 Optional local helper integration test (no provider account):
 
@@ -272,7 +299,7 @@ core. The package depends on `libcap2-bin`; the Electron UI does not run as root
 
 ## Validation and limits
 
-The final local suite has **59 passing tests**, including real-core local
+The 0.2.1 local suite had **59 passing tests**, including real-core local
 HTTP/SOCKS5 forwarding, license integration mocks, offline transfer integrity,
 expiry enforcement and TUN failure regressions. A live Windows local-proxy HTTPS
 download was also verified. The user reported successful operation of both
