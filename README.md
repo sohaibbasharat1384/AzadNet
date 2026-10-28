@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.3.1** (local Windscribe account build; published downloads below are 0.2.1).
+version: **0.3.3** (local Windscribe login/CAPTCHA fix; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -115,12 +115,39 @@ node --test --test-concurrency=1 tests/*.test.cjs
 
 ## Windscribe setup
 
-Version 0.3.1 adds direct account login on the Windscribe page. Enter your account
-username/password in the **account** form, complete the provider's ASCII CAPTCHA
+Direct account login is on the Windscribe page. Enter your account
+username/password in the **account** form, complete the provider's CAPTCHA
 yourself if requested, and enter a six-digit 2FA code when required. Persian and
 Arabic digits in the 2FA field are converted to ASCII. Login errors are not
 automatically retried. The account summary shows plan, traffic and expiry when
 the provider returns those fields.
+
+Version 0.3.2 prefers the provider's image/puzzle CAPTCHA in a separate large
+dialog. Move the handle yourself with the mouse, touch or arrow keys, then
+confirm. Zoom controls and fit-to-width help with small screens. The app displays
+the provider's original PNGs and forwards the user's chosen offset and actual
+coordinate trail; it does not identify a target or generate a solution. Text
+mode remains available with a monospace font, preserved spacing, scrolling and
+zoom. **Fresh CAPTCHA** / the mode switch request another challenge only when
+clicked. A rejected/expired CAPTCHA waits for that explicit action instead of
+automatically retrying authentication. The original short-lived login challenge
+deadline still applies.
+
+Unknown provider errors now include a numeric code. Connection logs/export also
+include bounded account diagnostics (operation, API code and HTTP status), without
+usernames, passwords, session/security tokens, CAPTCHA content or raw response
+messages. These diagnostics make further failures reviewable without credentials.
+
+Version 0.3.3 fixes the confirmed API error **1337**, whose response is
+"Unexpected client version. Please update your app." The request incorrectly
+sent AzadNet's 0.3.x as `app_version`. This field now carries the compatibility
+reference **2.25.5**, matching the
+[pinned upstream integration configuration](https://github.com/Windscribe/Desktop-App/blob/c64bb6f46065a11a2bdbbfd880565e996ee57146/cmake/integrations/windscribe.cmake);
+AzadNet's own version remains explicit in `User-Agent` and `X-AzadNet-Version`.
+The same negative fixture request that returned 1337 then reached the expected
+"Security token is required" check (708). No user credentials or CAPTCHA solution
+were used for that protocol validation. Successful real account login still
+requires the user's own completion of authentication; no controls are disabled.
 
 The account password is used only during login; it is not saved in settings or
 logs. **Remember me** stores only the session token and an account identifier,
