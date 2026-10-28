@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.3.3** (local Windscribe login/CAPTCHA fix; published downloads below are 0.2.1).
+version: **0.3.3** (local Windscribe CAPTCHA improvements; direct account login still fails with1337 for the reported real account; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -138,16 +138,15 @@ include bounded account diagnostics (operation, API code and HTTP status), witho
 usernames, passwords, session/security tokens, CAPTCHA content or raw response
 messages. These diagnostics make further failures reviewable without credentials.
 
-Version 0.3.3 fixes the confirmed API error **1337**, whose response is
-"Unexpected client version. Please update your app." The request incorrectly
-sent AzadNet's 0.3.x as `app_version`. This field now carries the compatibility
-reference **2.25.5**, matching the
+Version 0.3.3 separates AzadNet's version from the API compatibility reference
+**2.25.5**, matching the
 [pinned upstream integration configuration](https://github.com/Windscribe/Desktop-App/blob/c64bb6f46065a11a2bdbbfd880565e996ee57146/cmake/integrations/windscribe.cmake);
 AzadNet's own version remains explicit in `User-Agent` and `X-AzadNet-Version`.
-The same negative fixture request that returned 1337 then reached the expected
-"Security token is required" check (708). No user credentials or CAPTCHA solution
-were used for that protocol validation. Successful real account login still
-requires the user's own completion of authentication; no controls are disabled.
+A negative request without a security token reached error708. This did **not**
+validate the complete login path: the user subsequently reported1337 after a
+manual CAPTCHA in0.3.3. The underlying incompatibility remains unresolved.
+Source diagnostics now record only allowlisted provider-reason identifiers and
+the login phase, without raw error bodies or credentials. No controls are disabled.
 
 The account password is used only during login; it is not saved in settings or
 logs. **Remember me** stores only the session token and an account identifier,
