@@ -6,7 +6,7 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const {EventEmitter}=require('node:events');
 const {PassThrough}=require('node:stream');
-const {WindscribeAccount,WindscribeError,apiRequest,captchaData}=require('../desktop/lib/windscribe-account.cjs');
+const {WindscribeAccount,WindscribeError,apiRequest,apiPlatform,captchaData}=require('../desktop/lib/windscribe-account.cjs');
 const accountPassword='fixture-account-password',token='fixture-session-token',connectionPassword='fixture-connection-password';
 const profile={session_auth_hash:token,user_id:'fixture-user-id',username:'fixture-user',status:1,is_premium:1,traffic_used:1024,traffic_max:2048,premium_expiry_date:'2030-01-01'};
 function vault(){const key=crypto.randomBytes(32);return {available:()=>true,encrypt(text){const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv);return Buffer.concat([iv,cipher.update(text),cipher.final(),cipher.getAuthTag()]);},decrypt(bytes){const decipher=crypto.createDecipheriv('aes-256-gcm',key,bytes.subarray(0,12));decipher.setAuthTag(bytes.subarray(-16));return Buffer.concat([decipher.update(bytes.subarray(12,-16)),decipher.final()]).toString();}};}
@@ -76,11 +76,16 @@ function transportFixture(reply,status=200){
   let captured;const requestImpl=(url,options,onResponse)=>{const req=new EventEmitter();req.setTimeout=()=>{};req.destroy=()=>req.emit('error',Error(accountPassword));req.end=body=>{captured={url:String(url),options,body};const res=new PassThrough();res.statusCode=status;onResponse(res);setImmediate(()=>res.end(JSON.stringify(reply)));};return req;};
   return {requestImpl,get captured(){return captured;}};
 }
+
+test('API platform metadata matches the supported Windows and Ubuntu package identifiers',()=>{
+  assert.equal(apiPlatform('win32'),'windows');assert.equal(apiPlatform('linux'),'linux_deb_x64');
+});
 test('HTTPS transport puts login secrets in POST body, session token in Bearer header, and rejects redirects',async()=>{
   const t=transportFixture({data:{token:'secure'}});await apiRequest({method:'POST',endpoint:'Session',parameters:{username:'user',password:accountPassword,'2fa_code':''},requestImpl:t.requestImpl});
-  assert.equal(t.captured.url,'https://api.windscribe.com/Session');assert.equal(t.captured.options.headers.Authorization,undefined);assert.equal(new URLSearchParams(t.captured.body).get('password'),accountPassword);assert.equal(new URLSearchParams(t.captured.body).has('2fa_code'),false);
-  const params=new URLSearchParams(t.captured.body);assert.equal(params.get('client_auth_hash'),crypto.createHash('md5').update('952b4412f002315aa50751032fcaab03'+params.get('time')).digest('hex'));
-  assert.equal(params.get('app_version'),'2.25.5');assert.ok(t.captured.options.headers['User-Agent'].startsWith('AzadNet/'));assert.equal(t.captured.options.headers['X-AzadNet-Version'],require('../package.json').version);assert.notEqual(params.get('app_version'),require('../package.json').version);
+  assert.equal(t.captured.url,'https://api.windscribe.com/Session');assert.equal(t.captured.options.headers.Authorization,'Bearer 0');assert.equal(new URLSearchParams(t.captured.body).get('password'),accountPassword);assert.equal(new URLSearchParams(t.captured.body).has('2fa_code'),false);
+  const params=new URLSearchParams(t.captured.body);assert.equal(params.has('client_auth_hash'),false);assert.equal(params.has('time'),false);
+  const preflight=transportFixture({data:{token:'secure'}});await apiRequest({method:'POST',endpoint:'AuthToken/login',parameters:{username:'fixture-user'},token:null,requestImpl:preflight.requestImpl});assert.equal(preflight.captured.options.headers.Authorization,'Bearer 0');assert.equal(new URLSearchParams(preflight.captured.body).has('client_auth_hash'),false);
+  assert.equal(params.get('app_version'),'2.24.13');assert.equal(t.captured.options.headers['User-Agent'],`Windscribe/2.24.13 (${apiPlatform()})`);assert.equal(t.captured.options.headers['X-AzadNet-Client'],'independent-desktop');assert.equal(t.captured.options.headers['X-AzadNet-Version'],require('../package.json').version);assert.notEqual(params.get('app_version'),require('../package.json').version);
   const auth=transportFixture({data:profile});await apiRequest({method:'GET',endpoint:'Session',token,requestImpl:auth.requestImpl});assert.equal(auth.captured.url.includes(token),false);assert.equal(auth.captured.options.headers.Authorization,'Bearer '+token);
   const redirect=transportFixture({data:{}},302);await assert.rejects(apiRequest({method:'GET',endpoint:'Session',token,requestImpl:redirect.requestImpl}),{code:'redirect'});
 });
@@ -103,7 +108,7 @@ test('provider version reason is retained separately from code 1337 without assu
 
 test('diagnostics allowlist the provider reason and record the CAPTCHA phase without retaining raw responses',async()=>{
   const f=await fixture(async r=>{if(r.endpoint==='AuthToken/login')return {token:'secure',captcha:{ascii_art:'fixture'}};throw new WindscribeError(1337,undefined,{httpStatus:400,providerReason:'client-version'});});
-  try{const start=await f.login();f.advance();await assert.rejects(f.account.continue({id:start.challenge.id,captchaSolution:'fixture'}),{code:1337});const log=f.account.getDiagnostics()[0].message;assert.ok(log.includes('reason=client-version'));assert.ok(log.includes('phase=captcha'));assert.ok(log.includes('API=2.25.5'));assert.equal(log.includes(accountPassword),false);
+  try{const start=await f.login();f.advance();await assert.rejects(f.account.continue({id:start.challenge.id,captchaSolution:'fixture'}),{code:1337});const log=f.account.getDiagnostics()[0].message;assert.ok(log.includes('reason=client-version'));assert.ok(log.includes('phase=captcha'));assert.ok(log.includes('API=2.24.13'));assert.equal(log.includes(accountPassword),false);
     const unsafe=new WindscribeError(1337,undefined,{providerReason:accountPassword});assert.equal(unsafe.providerReason,undefined);
   }finally{await f.close();}
 });

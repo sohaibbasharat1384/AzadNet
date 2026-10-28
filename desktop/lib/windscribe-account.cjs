@@ -4,9 +4,10 @@ const path=require('node:path');
 const crypto=require('node:crypto');
 const https=require('node:https');
 const VERSION=require('../../package.json').version;
-// API compatibility reference, not this application's own version. Matches
-// cmake/integrations/windscribe.cmake at Desktop-App c64bb6f46065a11a2bdbbfd880565e996ee57146.
-const API_COMPAT_VERSION='2.25.5';
+// API compatibility reference, not this application's own version. Pin the
+// released SDK/application contract, rather than an unreleased master build.
+// https://github.com/Windscribe/Desktop-App/releases/tag/v2.24.13
+const API_COMPAT_VERSION='2.24.13';
 const ENDPOINTS=new Set(['AuthToken/login','Session','ServerCredentials']);
 const INTERNAL_CODES=new Set(['network','response','redirect','local','input','vault','session','cancel']);
 // Preserve only exact, reviewed provider reasons. Never retain raw error bodies:
@@ -20,9 +21,6 @@ const PROVIDER_REASONS=new Map([
 // Public protocol signature salt from Windscribe/wsnet 1.5.43 settings.h;
 // this is not a user credential or a private developer API key.
 const SIGNATURE_SALT='if_you_copy_this_you_might_die_a_painful_death';
-// Public client authentication protocol: browser-extension/ws-api-client,
-// getMandatoryParams.ts at ed83749ad1a4163f24e39572fc9597a4091a0ee7.
-const CLIENT_AUTH_SALT='952b4412f002315aa50751032fcaab03';
 const errors={701:'نشست Windscribe معتبر نیست؛ دوباره وارد شوید.',702:'نام کاربری یا رمز حساب Windscribe درست نیست.',703:'ورود به این حساب توسط Windscribe پذیرفته نشد.',706:'این حساب توسط Windscribe غیرفعال شده است.',707:'تعداد درخواست‌های ورود زیاد است؛ کمی بعد دوباره امتحان کنید.',708:'مهلت تأیید امنیتی تمام شد؛ ورود را دوباره شروع کنید.',1337:'Windscribe درخواست ورود این کلاینت را نپذیرفت (کد 1337)؛ جزئیات تشخیص در گزارش اتصال ثبت شد.',1340:'کد دومرحله‌ای حساب را وارد کنید.',1341:'کد دومرحله‌ای درست نیست؛ کد تازه را وارد کنید.'};
 class WindscribeError extends Error{
   constructor(code,message,details={}){
@@ -37,11 +35,18 @@ function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=http
   if(!ENDPOINTS.has(endpoint)||!['GET','POST','DELETE'].includes(method))return Promise.reject(new Error('Invalid Windscribe API operation'));
   return new Promise((resolve,reject)=>{
     const url=new URL('https://api.windscribe.com/'+endpoint);
-    const time=String(Math.round(Date.now()/1000));
-    const params=new URLSearchParams(Object.entries({...parameters,platform:process.platform==='win32'?'windows':'linux',app_version:API_COMPAT_VERSION,time,client_auth_hash:crypto.createHash('md5').update(CLIENT_AUTH_SALT+time).digest('hex')}).filter(([,value])=>value!==''&&value!=null));
+    const params=new URLSearchParams(Object.entries({...parameters,platform:apiPlatform(),app_version:API_COMPAT_VERSION}).filter(([,value])=>value!==''&&value!=null));
     if(method!=='POST')url.search=params.toString();
     const body=method==='POST'?params.toString():null;
-    const request=requestImpl(url,{method,signal,headers:{'User-Agent':`AzadNet/${VERSION} (Windscribe API compatibility/${API_COMPAT_VERSION})`,'X-AzadNet-Version':VERSION,'Accept':'application/json',...(body?{'Content-Type':'application/x-www-form-urlencoded; charset=utf-8','Content-Length':Buffer.byteLength(body)}:{}),...(token?{Authorization:`Bearer ${token}`}:{})}},response=>{
+    // The official SDK defaults BaseRequest::bearerToken_ to "0", including
+    // AuthToken/login and Session POST. Omitting the header selects the legacy
+    // API contract. This fixes preflight dispatch; it does not by itself prove
+    // that the subsequent user authentication will succeed.
+    // This anonymous sentinel grants no session; credentials/CAPTCHA/2FA remain
+    // required. Use the real session token for authenticated operations.
+    // Match the released SDK's compatibility header syntax. Identify this
+    // independent client separately; this is not the official application.
+    const request=requestImpl(url,{method,signal,headers:{'User-Agent':`Windscribe/${API_COMPAT_VERSION} (${apiPlatform()})`,'X-AzadNet-Client':'independent-desktop','X-AzadNet-Version':VERSION,'Accept':'application/json','Authorization':`Bearer ${token||'0'}`,...(body?{'Content-Type':'application/x-www-form-urlencoded','Content-Length':Buffer.byteLength(body)}:{})}},response=>{
       let bytes=0;const chunks=[];const failure=(code,message,providerReason)=>new WindscribeError(code,message,{httpStatus:response.statusCode,providerReason});
       response.on('data',data=>{bytes+=data.length;if(bytes>2*1024*1024){response.destroy();reject(failure('response','پاسخ Windscribe بیش از حد بزرگ است.'));return;}chunks.push(data);});
       response.on('error',()=>reject(failure('network','ارتباط با Windscribe کامل نشد؛ وضعیت اینترنت را بررسی کنید.')));
@@ -61,6 +66,9 @@ function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=http
     request.end(body);
   });
 }
+// Ubuntu/DEB identity from the official LinuxUtils::DEB_PLATFORM_NAME_X64.
+// The distributed Windows and Ubuntu builds are both x64.
+function apiPlatform(platform=process.platform){return platform==='win32'?'windows':'linux_deb_x64';}
 function text(value,max){return typeof value==='string'&&value.length<=max&&!/[\x00-\x1f\x7f]/.test(value);}
 function captchaPNG(value){
   if(typeof value!=='string')throw new WindscribeError('captcha','تصویر CAPTCHA معتبر دریافت نشد.');
@@ -233,4 +241,4 @@ class WindscribeAccount{
   });}
   shutdown(){this.abort?.abort();this.clearPending();this.token=null;this.profile=null;}
 }
-module.exports={WindscribeAccount,WindscribeError,apiRequest,sessionProfile,captchaData};
+module.exports={WindscribeAccount,WindscribeError,apiRequest,apiPlatform,sessionProfile,captchaData};
