@@ -21,7 +21,7 @@ a successful build. The Android APK reported Go1.26.8; these are compatible
 desktop builds, not byte-identical Android library reproductions.
 
 The script keeps dependency/build caches under `.tools`, verifies module content,
-runs the source's Fragment tests, then builds standalone Windows and Linux amd64
+runs the source's Fragment and OpenVPN certificate identity tests, then builds standalone Windows and Linux amd64
 CLI executables with CGO disabled, `with_gvisor`, baseline `GOAMD64=v1` and
 `-trimpath`. Windows can execute/test the Windows output; the Linux executable
 is cross-compiled and must additionally be tested on Ubuntu. The custom CLI
@@ -32,3 +32,11 @@ record rewriting plus staged writes through a CONNECT tunnel to a local TCP
 receiver. That investigation helper and raw output remain outside the public
 repository. The application integration tests in `tests/` use local fixtures and
 do not change the system proxy or routing.
+
+The desktop patch also adds `verify-x509-name` / `verify-x509-name-type` to the
+OpenVPN outbound. CA chain, validity and server-authentication EKU validation run
+before an exact (`name`) or prefix (`name-prefix`) match against the leaf CN.
+Local Go tests generate temporary certificates and cover matching names, rejected
+names, prefix matching and an untrusted CA. The binary manifest advertises
+`supportsOpenVPNIdentity`; the app verifies the executable SHA256 before enabling
+profiles with this constraint. No fixture private keys are distributed.

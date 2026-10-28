@@ -12,3 +12,160 @@ diff --git a/hub/executor/executor.go b/hub/executor/executor.go
  	updateIPTables(cfg)
  	updateTunnels(cfg.Tunnels)
  
+diff --git a/adapter/outbound/openvpn.go b/adapter/outbound/openvpn.go
+index 3c7b1e63..6285a3a3 100644
+--- a/adapter/outbound/openvpn.go
++++ b/adapter/outbound/openvpn.go
+@@ -59,6 +59,8 @@ type OpenVPNOption struct {
+ 	Username           string            `proxy:"username,omitempty"`
+ 	Password           string            `proxy:"password,omitempty"`
+ 	PeerInfo           map[string]string `proxy:"peer-info,omitempty"`
++	VerifyX509Name     string            `proxy:"verify-x509-name,omitempty"`
++	VerifyX509NameType string            `proxy:"verify-x509-name-type,omitempty"`
+ 	Ping               int               `proxy:"ping,omitempty"`
+ 	PingRestart        int               `proxy:"ping-restart,omitempty"`
+ 	TranWindow         *int              `proxy:"tran-window,omitempty"`
+@@ -117,6 +119,8 @@ func NewOpenVPN(option OpenVPNOption) (*OpenVPN, error) {
+ 		Username:            option.Username,
+ 		Password:            option.Password,
+ 		PeerInfo:            option.PeerInfo,
++		VerifyX509Name:      option.VerifyX509Name,
++		VerifyX509NameType:  option.VerifyX509NameType,
+ 		PingInterval:        time.Duration(option.Ping) * time.Second,
+ 		PingRestart:         time.Duration(option.PingRestart) * time.Second,
+ 		TransitionWindow:    transitionWindow,
+diff --git a/transport/openvpn/client.go b/transport/openvpn/client.go
+index 053b0bf9..468b4d74 100644
+--- a/transport/openvpn/client.go
++++ b/transport/openvpn/client.go
+@@ -1759,7 +1759,22 @@ func (c *Client) tlsConfig() (*tls.Config, error) {
+ 			Intermediates: intermediates,
+ 			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+ 		})
+-		return err
++
++		if err != nil {
++			return err
++		}
++		expected := c.config.VerifyX509Name
++		if expected != "" {
++			actual := cs.PeerCertificates[0].Subject.CommonName
++			if c.config.VerifyX509NameType == "name-prefix" {
++				if !strings.HasPrefix(actual, expected) {
++					return errors.New("openvpn peer identity mismatch")
++				}
++			} else if actual != expected {
++				return errors.New("openvpn peer identity mismatch")
++			}
++		}
++		return nil
+ 	}
+ 	cfg := &tls.Config{
+ 		InsecureSkipVerify: true,
+diff --git a/transport/openvpn/config.go b/transport/openvpn/config.go
+index 51690c3d..38392fa0 100644
+--- a/transport/openvpn/config.go
++++ b/transport/openvpn/config.go
+@@ -54,7 +54,9 @@ type ClientConfig struct {
+ 	Username string
+ 	Password string
+ 
+-	PeerInfo map[string]string
++	PeerInfo           map[string]string
++	VerifyX509Name     string
++	VerifyX509NameType string
+ 
+ 	PingInterval        time.Duration
+ 	PingRestart         time.Duration
+@@ -238,6 +240,17 @@ func (c *ClientConfig) Prepare() error {
+ 	c.Auth = normalizeAuth(c.Auth)
+ 	c.CompLZO = normalizeCompLZO(c.CompLZO)
+ 
++	if c.VerifyX509Name != "" {
++		if strings.ContainsAny(c.VerifyX509Name, "\x00\r\n") || len(c.VerifyX509Name) > 256 {
++			return errors.New("invalid openvpn peer identity")
++		}
++		if c.VerifyX509NameType == "" {
++			c.VerifyX509NameType = "name"
++		}
++		if c.VerifyX509NameType != "name" && c.VerifyX509NameType != "name-prefix" {
++			return errors.New("unsupported openvpn peer identity type")
++		}
++	}
+ 	if err := c.ValidateInstallScriptSubset(); err != nil {
+ 		return err
+ 	}
+diff --git a/transport/openvpn/peer_identity_test.go b/transport/openvpn/peer_identity_test.go
+new file mode 100644
+index 00000000..164942b9
+--- /dev/null
++++ b/transport/openvpn/peer_identity_test.go
+@@ -0,0 +1,68 @@
++package openvpn
++
++import (
++	"crypto/ecdsa"
++	"crypto/elliptic"
++	"crypto/rand"
++	"github.com/metacubex/tls"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"encoding/pem"
++	"math/big"
++	"testing"
++	"time"
++)
++
++func identityFixture(t *testing.T, name string) ([]byte, *x509.Certificate) {
++	t.Helper()
++	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++	if err != nil {
++		t.Fatal(err)
++	}
++	now := time.Now()
++	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "AzadNet local test CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
++	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	parsedCA, err := x509.ParseCertificate(caDER)
++	if err != nil {
++		t.Fatal(err)
++	}
++	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: name}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
++	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, parsedCA, &key.PublicKey, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	parsedLeaf, err := x509.ParseCertificate(leafDER)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), parsedLeaf
++}
++func TestOpenVPNPeerIdentity(t *testing.T) {
++	ca, leaf := identityFixture(t, "windscribe-local-test")
++	for _, tc := range []struct {
++		name, kind string
++		ok         bool
++	}{{"windscribe-local-test", "name", true}, {"wrong-peer", "name", false}, {"windscribe-", "name-prefix", true}, {"wrong-", "name-prefix", false}} {
++		client := &Client{config: &ClientConfig{CA: ca, VerifyX509Name: tc.name, VerifyX509NameType: tc.kind}}
++		cfg, err := client.tlsConfig()
++		if err != nil {
++			t.Fatal(err)
++		}
++		err = cfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}})
++		if (err == nil) != tc.ok {
++			t.Fatalf("identity check %s/%s: %v", tc.name, tc.kind, err)
++		}
++	}
++	otherCA, _ := identityFixture(t, "untrusted-ca")
++	client := &Client{config: &ClientConfig{CA: otherCA, VerifyX509Name: "windscribe-local-test", VerifyX509NameType: "name"}}
++	cfg, err := client.tlsConfig()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if cfg.VerifyConnection(tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}) == nil {
++		t.Fatal("matching name bypassed CA validation")
++	}
++}

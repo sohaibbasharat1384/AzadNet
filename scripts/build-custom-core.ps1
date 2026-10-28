@@ -34,7 +34,7 @@ foreach ($key in $buildEnvironment.Keys) {
 }
 New-Item -ItemType Directory -Force -Path $env:GOTMPDIR | Out-Null
 $compilerVersion = (& $GoExecutable version).Trim()
-$version = 'v1.19.30-azadnet-fragments-05fb40f89637'
+  $version = 'v1.19.30-azadnet-windscribe-05fb40f89637'
 try {
   Push-Location $SourceDirectory
   try {
@@ -46,7 +46,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Dependency verification failed' }
     if (-not $SkipTests) {
       Write-Host 'Compiling and running fragment tests (parallelism 2)...'
-      & $GoExecutable test '-p=2' '-tags=with_gvisor' './adapter/outbound' '-run' 'Fragment' '-count=1' '-v'
+      & $GoExecutable test '-p=2' '-tags=with_gvisor' './adapter/outbound' './transport/openvpn' '-run' 'Fragment|OpenVPN.*Identity' '-count=1' '-v'
       if ($LASTEXITCODE -ne 0) { throw 'Fragment runtime unit tests failed' }
     }
     foreach ($target in @('windows','linux')) {
@@ -59,7 +59,7 @@ try {
       & $GoExecutable version '-m' $builtPath | Set-Content -LiteralPath "$builtPath.buildinfo.txt" -Encoding utf8
       @{
         schemaVersion=1; sha256=(Get-FileHash -LiteralPath $builtPath -Algorithm SHA256).Hash.ToLowerInvariant();
-        supportsFragments=$true; sourceRepo=$sourceRepo; sourceCommit=$sourceCommit; compiler=$compilerVersion;
+        supportsFragments=$true; supportsOpenVPNIdentity=$true; sourceRepo=$sourceRepo; sourceCommit=$sourceCommit; compiler=$compilerVersion;
         version=$version; platform=$target; arch='amd64'; goamd64='v1'; cgoEnabled=$false;
         tags=@('with_gvisor'); fragmentTestsPassed=(-not $SkipTests); linuxExecutionVerified=$false;
         desktopPatchSha256=(Get-FileHash -LiteralPath $desktopPatch -Algorithm SHA256).Hash.ToLowerInvariant();
@@ -77,7 +77,7 @@ try {
       compiler=$compilerVersion; version=$version; cgoEnabled=$false;
       desktopPatchSha256=(Get-FileHash -LiteralPath $desktopPatch -Algorithm SHA256).Hash.ToLowerInvariant();
       compilerExecutableSha256=(Get-FileHash -LiteralPath $GoExecutable -Algorithm SHA256).Hash.ToLowerInvariant();
-      tags=@('with_gvisor'); goamd64='v1'; supportsFragments=$true;
+      tags=@('with_gvisor'); goamd64='v1'; supportsFragments=$true; supportsOpenVPNIdentity=$true;
       fragmentTestsPassed=(-not $SkipTests); linuxExecutionVerified=$false;
       toolchainDistribution='https://github.com/MetaCubeX/go/releases/download/build/go1.26.windows-amd64.zip';
       toolchainArchiveSha256='2483b14ce111fa89ac671cdb00073c5b19670198be1334f491a8f3fe36affeb0';

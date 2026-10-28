@@ -1,0 +1,108 @@
+diff --git a/cli/client_test.go b/cli/client_test.go
+index 7428ce7..5672e33 100644
+--- a/cli/client_test.go
++++ b/cli/client_test.go
+@@ -22,7 +22,7 @@ func TestEndToEndConnection(t *testing.T) {
+ 	go func() {
+ 		err := NewHTTPClient(tcpServerAddress, webSocketServerAddress, 1, 1600, func(fd int) {
+ 			t.Log(fd)
+-		}, Channel, false).Run()
++		}, Channel, false, "").Run()
+ 		if err != nil {
+ 			t.Fail()
+ 			return
+diff --git a/cli/httpClient.go b/cli/httpClient.go
+index d13c34d..90d0a51 100644
+--- a/cli/httpClient.go
++++ b/cli/httpClient.go
+@@ -136,7 +136,14 @@ func (h *httpClient) createRemoteConnection() (*tls.UConn, error) {
+ 	}
+ 
+ 	remoteConn := tls.UClient(netConn, cfg, tls.HelloCustom)
+-	clientHelloSpec, err := tls.UTLSIdToSpec(tls.HelloRandomizedALPN)
++	// uTLS 1.8.2 may advertise a hybrid group without its key share, but
++	// cannot handle an HRR selecting that group. Always include both.
++	id := tls.HelloRandomizedALPN
++	weights := tls.DefaultWeights
++	weights.CurveIDs_Append_X25519 = 1
++	weights.KeyShare_Append_RandomGroups = 1
++	id.Weights = &weights
++	clientHelloSpec, err := tls.UTLSIdToSpec(id)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("uTlsConn.generateRandomizedSpec error: %+v", err)
+ 	}
+diff --git a/websocket/client.go b/websocket/client.go
+index 8cbc1ab..db02af8 100644
+--- a/websocket/client.go
++++ b/websocket/client.go
+@@ -346,7 +346,13 @@ func (d *Dialer) DialContext(ctx context.Context, urlStr string, requestHeader h
+ 		if cfg.ServerName == "" {
+ 			cfg.ServerName = hostNoPort
+ 		}
+-		tlsConn := tls.UClient(netConn, cfg, tls.HelloRandomizedNoALPN)
++		// Keep hybrid supported groups and key shares consistent (uTLS 1.8.2).
++		id := tls.HelloRandomizedNoALPN
++		weights := tls.DefaultWeights
++		weights.CurveIDs_Append_X25519 = 1
++		weights.KeyShare_Append_RandomGroups = 1
++		id.Weights = &weights
++		tlsConn := tls.UClient(netConn, cfg, id)
+ 		netConn = tlsConn
+ 
+ 		if trace != nil && trace.TLSHandshakeStart != nil {
+diff --git a/cli/azadnet_tls_test.go b/cli/azadnet_tls_test.go
+new file mode 100644
+--- /dev/null
++++ b/cli/azadnet_tls_test.go
+@@ -0,0 +1,51 @@
++package cli
++
++import (
++	tls "github.com/refraction-networking/utls"
++	"testing"
++)
++
++func TestAzadNetRandomizedHybridShares(t *testing.T) {
++	for _, base := range []tls.ClientHelloID{tls.HelloRandomizedALPN, tls.HelloRandomizedNoALPN} {
++		hybrid := 0
++		for i := 0; i < 1000; i++ {
++			id := base
++			weights := tls.DefaultWeights
++			weights.CurveIDs_Append_X25519 = 1
++			weights.KeyShare_Append_RandomGroups = 1
++			id.Weights = &weights
++			spec, err := tls.UTLSIdToSpec(id)
++			if err != nil {
++				t.Fatal(err)
++			}
++			groups := map[tls.CurveID]bool{}
++			shares := map[tls.CurveID]bool{}
++			for _, ext := range spec.Extensions {
++				if v, ok := ext.(*tls.SupportedCurvesExtension); ok {
++					for _, g := range v.Curves {
++						groups[g] = true
++					}
++				}
++				if v, ok := ext.(*tls.KeyShareExtension); ok {
++					for _, s := range v.KeyShares {
++						shares[s.Group] = true
++					}
++				}
++			}
++			if groups[tls.X25519MLKEM768] {
++				hybrid++
++				if !shares[tls.X25519MLKEM768] {
++					t.Fatal("hybrid group without initial key share")
++				}
++			}
++			for g := range shares {
++				if !groups[g] {
++					t.Fatal("key share without advertised group")
++				}
++			}
++		}
++		if hybrid == 0 {
++			t.Fatal("test never covered TLS 1.3 hybrid")
++		}
++	}
++}

@@ -3,7 +3,8 @@
 *.js text eol=lf
 *.py text eol=lf
 *.ps1 text eol=lf
-*.patch text eol=lf
+# Unified diff context intentionally has a space before tabs and blank lines.
+*.patch text eol=lf -whitespace
 *.md text eol=lf
 *.json text eol=lf
 *.html text eol=lf

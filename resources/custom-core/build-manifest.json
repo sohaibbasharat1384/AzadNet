@@ -1,37 +1,38 @@
 {
-  "schemaVersion": 1,
-  "cgoEnabled": false,
-  "sourceRepo": "https://github.com/WhiteDNS/mihomo.git",
-  "toolchainArchiveSha256": "2483b14ce111fa89ac671cdb00073c5b19670198be1334f491a8f3fe36affeb0",
   "fragmentTestsPassed": true,
-  "supportsFragments": true,
-  "desktopPatchSha256": "7fbe9062b59c8552c6344f12c95251f4cb093a47771ac4b10bb4d625029aebbf",
-  "sourceCommit": "05fb40f89637aa27d81b638bff765a6d57797cdb",
-  "compiler": "go version go1.26.10 windows/amd64",
-  "compilerExecutableSha256": "ea664dce5156a1d1b00f9499c43464c028e41084161fd25887ee00fa99bb1bea",
-  "matchingAndroidWrapperCommit": "8f08f6e2d732c58bcbb9d13771af4456c039fe46",
   "toolchainDistribution": "https://github.com/MetaCubeX/go/releases/download/build/go1.26.windows-amd64.zip",
-  "goamd64": "v1",
-  "artifacts": [
-    {
-      "bytes": 61178368,
-      "file": "mihomo-windows-amd64.exe",
-      "sha256": "75449e1846a55294530e7c6525f741608cce31097563e1c851aed1136bc21f08"
-    },
-    {
-      "bytes": 61956258,
-      "file": "mihomo-linux-amd64",
-      "sha256": "b42e1123f1eff80be7a807d7eed316a5f6a5af1d83a220788295078a35e7367d"
-    },
-    {
-      "bytes": 1293868,
-      "file": "source-05fb40f89637.tar.gz",
-      "sha256": "7f5e58329755121d058829215758bb01fa9b5e635d959e0315f7eaa4ad33ec7f"
-    }
-  ],
-  "version": "v1.19.30-azadnet-fragments-05fb40f89637",
   "linuxExecutionVerified": false,
   "tags": [
     "with_gvisor"
-  ]
+  ],
+  "schemaVersion": 1,
+  "desktopPatchSha256": "668306ff37c3f476229fdf6a91e700418b5e0f25c02f5d1a53d51aa321a22634",
+  "artifacts": [
+    {
+      "file": "mihomo-windows-amd64.exe",
+      "bytes": 61180416,
+      "sha256": "2c399cdfdd300f03bde9b716d6f2854634e7e435b9ef724a14418a053f16ceee"
+    },
+    {
+      "file": "mihomo-linux-amd64",
+      "bytes": 61960354,
+      "sha256": "b7b545a87cc080e3b72e27fd8bbdc70e67f48aa837da8ecf41a042f172d453e5"
+    },
+    {
+      "file": "source-05fb40f89637.tar.gz",
+      "bytes": 1293868,
+      "sha256": "7f5e58329755121d058829215758bb01fa9b5e635d959e0315f7eaa4ad33ec7f"
+    }
+  ],
+  "version": "v1.19.30-azadnet-windscribe-05fb40f89637",
+  "sourceRepo": "https://github.com/WhiteDNS/mihomo.git",
+  "sourceCommit": "05fb40f89637aa27d81b638bff765a6d57797cdb",
+  "compilerExecutableSha256": "ea664dce5156a1d1b00f9499c43464c028e41084161fd25887ee00fa99bb1bea",
+  "compiler": "go version go1.26.10 windows/amd64",
+  "supportsOpenVPNIdentity": true,
+  "toolchainArchiveSha256": "2483b14ce111fa89ac671cdb00073c5b19670198be1334f491a8f3fe36affeb0",
+  "matchingAndroidWrapperCommit": "8f08f6e2d732c58bcbb9d13771af4456c039fe46",
+  "supportsFragments": true,
+  "cgoEnabled": false,
+  "goamd64": "v1"
 }

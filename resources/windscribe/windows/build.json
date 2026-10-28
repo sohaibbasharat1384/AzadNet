@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "e6c325eed099e746ee98f80de7b827e942416d20",
+  "cgoEnabled": false,
+  "arch": "amd64",
+  "tlsCompatibilityTestsPassed": true,
+  "compiler": "go version go1.26.10 windows/amd64",
+  "sourceRepo": "https://github.com/Windscribe/wstunnel.git",
+  "platform": "windows",
+  "tunnelPatchSha256": "3b3a768d99ff08ed0e28a7f4488a939c10ae9322b01836c29d7817cbd70f47eb",
+  "sha256": "083c61b93a4ffa8ff5156dd6e0a087328e4b848bcced2f3dae3801d6aad20c18"
+}

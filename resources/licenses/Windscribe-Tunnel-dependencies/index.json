@@ -1,0 +1,98 @@
+[
+  {
+    "version": "v1.0.6",
+    "module": "github.com/andybalholm/brotli",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_andybalholm_brotli@v1.0.6"
+  },
+  {
+    "version": "v1.4.2",
+    "module": "github.com/gorilla/websocket",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_gorilla_websocket@v1.4.2"
+  },
+  {
+    "version": "v1.1.0",
+    "module": "github.com/inconshreveable/mousetrap",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_inconshreveable_mousetrap@v1.1.0"
+  },
+  {
+    "version": "v1.17.4",
+    "module": "github.com/klauspost/compress",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_klauspost_compress@v1.17.4"
+  },
+  {
+    "version": "v1.8.2",
+    "module": "github.com/refraction-networking/utls",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_refraction-networking_utls@v1.8.2"
+  },
+  {
+    "version": "v1.7.0",
+    "module": "github.com/spf13/cobra",
+    "files": [
+      "LICENSE.txt"
+    ],
+    "directory": "github.com_spf13_cobra@v1.7.0"
+  },
+  {
+    "version": "v1.0.5",
+    "module": "github.com/spf13/pflag",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "github.com_spf13_pflag@v1.0.5"
+  },
+  {
+    "version": "v1.10.0",
+    "module": "go.uber.org/atomic",
+    "files": [
+      "LICENSE.txt"
+    ],
+    "directory": "go.uber.org_atomic@v1.10.0"
+  },
+  {
+    "version": "v1.8.0",
+    "module": "go.uber.org/multierr",
+    "files": [
+      "LICENSE.txt"
+    ],
+    "directory": "go.uber.org_multierr@v1.8.0"
+  },
+  {
+    "version": "v1.23.0",
+    "module": "go.uber.org/zap",
+    "files": [
+      "LICENSE.txt"
+    ],
+    "directory": "go.uber.org_zap@v1.23.0"
+  },
+  {
+    "version": "v0.36.0",
+    "module": "golang.org/x/crypto",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "golang.org_x_crypto@v0.36.0"
+  },
+  {
+    "version": "v0.31.0",
+    "module": "golang.org/x/sys",
+    "files": [
+      "LICENSE"
+    ],
+    "directory": "golang.org_x_sys@v0.31.0"
+  }
+]
