@@ -94,9 +94,18 @@ test('unknown provider errors retain numeric code and HTTP status without reflec
   await assert.rejects(apiRequest({method:'POST',endpoint:'Session',parameters:{password:accountPassword},requestImpl:transport.requestImpl}),error=>error.code===1501&&error.httpStatus===403&&error.message.includes('1501')&&!error.message.includes(accountPassword)&&!error.message.includes(token));
 });
 
-test('confirmed client-version rejection has an actionable message and retains its provider code',async()=>{
+test('provider version reason is retained separately from code 1337 without assuming every 1337 has that reason',async()=>{
   const transport=transportFixture({errorCode:1337,errorMessage:'Unexpected client version. Please update your app.'},400);
-  await assert.rejects(apiRequest({method:'POST',endpoint:'Session',parameters:{password:accountPassword},requestImpl:transport.requestImpl}),error=>error.code===1337&&error.httpStatus===400&&error.message.includes('1337')&&error.message.includes('به‌روزرسانی'));
+  await assert.rejects(apiRequest({method:'POST',endpoint:'Session',parameters:{password:accountPassword},requestImpl:transport.requestImpl}),error=>error.code===1337&&error.httpStatus===400&&error.message.includes('1337')&&error.providerReason==='client-version');
+  const unknown=transportFixture({errorCode:1337,errorMessage:accountPassword},400);
+  await assert.rejects(apiRequest({method:'POST',endpoint:'Session',requestImpl:unknown.requestImpl}),error=>error.code===1337&&error.providerReason===undefined&&!error.message.includes(accountPassword));
+});
+
+test('diagnostics allowlist the provider reason and record the CAPTCHA phase without retaining raw responses',async()=>{
+  const f=await fixture(async r=>{if(r.endpoint==='AuthToken/login')return {token:'secure',captcha:{ascii_art:'fixture'}};throw new WindscribeError(1337,undefined,{httpStatus:400,providerReason:'client-version'});});
+  try{const start=await f.login();f.advance();await assert.rejects(f.account.continue({id:start.challenge.id,captchaSolution:'fixture'}),{code:1337});const log=f.account.getDiagnostics()[0].message;assert.ok(log.includes('reason=client-version'));assert.ok(log.includes('phase=captcha'));assert.ok(log.includes('API=2.25.5'));assert.equal(log.includes(accountPassword),false);
+    const unsafe=new WindscribeError(1337,undefined,{providerReason:accountPassword});assert.equal(unsafe.providerReason,undefined);
+  }finally{await f.close();}
 });
 
 test('account diagnostics contain bounded operation metadata only and reject arbitrary error-code text',async()=>{

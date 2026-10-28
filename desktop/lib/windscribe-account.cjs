@@ -9,19 +9,28 @@ const VERSION=require('../../package.json').version;
 const API_COMPAT_VERSION='2.25.5';
 const ENDPOINTS=new Set(['AuthToken/login','Session','ServerCredentials']);
 const INTERNAL_CODES=new Set(['network','response','redirect','local','input','vault','session','cancel']);
+// Preserve only exact, reviewed provider reasons. Never retain raw error bodies:
+// an upstream error can echo credentials or other request values.
+const PROVIDER_REASONS=new Map([
+  ['Unexpected client version. Please update your app.','client-version'],
+  ['Missing client authentication values.','client-auth-missing'],
+  ['Security token is required','security-token-required'],
+  ['Invalid CAPTCHA solution - try again','captcha-rejected'],
+]);
 // Public protocol signature salt from Windscribe/wsnet 1.5.43 settings.h;
 // this is not a user credential or a private developer API key.
 const SIGNATURE_SALT='if_you_copy_this_you_might_die_a_painful_death';
 // Public client authentication protocol: browser-extension/ws-api-client,
 // getMandatoryParams.ts at ed83749ad1a4163f24e39572fc9597a4091a0ee7.
 const CLIENT_AUTH_SALT='952b4412f002315aa50751032fcaab03';
-const errors={701:'نشست Windscribe معتبر نیست؛ دوباره وارد شوید.',702:'نام کاربری یا رمز حساب Windscribe درست نیست.',703:'ورود به این حساب توسط Windscribe پذیرفته نشد.',706:'این حساب توسط Windscribe غیرفعال شده است.',707:'تعداد درخواست‌های ورود زیاد است؛ کمی بعد دوباره امتحان کنید.',708:'مهلت تأیید امنیتی تمام شد؛ ورود را دوباره شروع کنید.',1337:'Windscribe نسخهٔ قرارداد API این کلاینت را نپذیرفت؛ برنامه به به‌روزرسانی نیاز دارد (کد 1337).',1340:'کد دومرحله‌ای حساب را وارد کنید.',1341:'کد دومرحله‌ای درست نیست؛ کد تازه را وارد کنید.'};
+const errors={701:'نشست Windscribe معتبر نیست؛ دوباره وارد شوید.',702:'نام کاربری یا رمز حساب Windscribe درست نیست.',703:'ورود به این حساب توسط Windscribe پذیرفته نشد.',706:'این حساب توسط Windscribe غیرفعال شده است.',707:'تعداد درخواست‌های ورود زیاد است؛ کمی بعد دوباره امتحان کنید.',708:'مهلت تأیید امنیتی تمام شد؛ ورود را دوباره شروع کنید.',1337:'Windscribe درخواست ورود این کلاینت را نپذیرفت (کد 1337)؛ جزئیات تشخیص در گزارش اتصال ثبت شد.',1340:'کد دومرحله‌ای حساب را وارد کنید.',1341:'کد دومرحله‌ای درست نیست؛ کد تازه را وارد کنید.'};
 class WindscribeError extends Error{
   constructor(code,message,details={}){
     const unknown=Number.isInteger(code)&&!errors[code];
     super(message||errors[code]||(unknown?`Windscribe درخواست را نپذیرفت (کد ${code}).`:'Windscribe درخواست را نپذیرفت.'));
     this.code=code;
     if(Number.isInteger(details.httpStatus))this.httpStatus=details.httpStatus;
+    if([...PROVIDER_REASONS.values()].includes(details.providerReason))this.providerReason=details.providerReason;
   }
 }
 function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=https.request}){
@@ -33,7 +42,7 @@ function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=http
     if(method!=='POST')url.search=params.toString();
     const body=method==='POST'?params.toString():null;
     const request=requestImpl(url,{method,signal,headers:{'User-Agent':`AzadNet/${VERSION} (Windscribe API compatibility/${API_COMPAT_VERSION})`,'X-AzadNet-Version':VERSION,'Accept':'application/json',...(body?{'Content-Type':'application/x-www-form-urlencoded; charset=utf-8','Content-Length':Buffer.byteLength(body)}:{}),...(token?{Authorization:`Bearer ${token}`}:{})}},response=>{
-      let bytes=0;const chunks=[];const failure=(code,message)=>new WindscribeError(code,message,{httpStatus:response.statusCode});
+      let bytes=0;const chunks=[];const failure=(code,message,providerReason)=>new WindscribeError(code,message,{httpStatus:response.statusCode,providerReason});
       response.on('data',data=>{bytes+=data.length;if(bytes>2*1024*1024){response.destroy();reject(failure('response','پاسخ Windscribe بیش از حد بزرگ است.'));return;}chunks.push(data);});
       response.on('error',()=>reject(failure('network','ارتباط با Windscribe کامل نشد؛ وضعیت اینترنت را بررسی کنید.')));
       response.on('end',()=>{
@@ -41,7 +50,7 @@ function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=http
         if(response.statusCode===429){reject(failure(707));return;}
         let value;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{reject(failure('response','پاسخ معتبر از API Windscribe دریافت نشد.'));return;}
         if(!value||typeof value!=='object'||Array.isArray(value)){reject(failure('response','پاسخ API Windscribe معتبر نیست.'));return;}
-        if(value.errorCode){reject(failure(Number(value.errorCode)));return;}
+        if(value.errorCode){reject(failure(Number(value.errorCode),undefined,PROVIDER_REASONS.get(value.errorMessage)));return;}
         if(response.statusCode<200||response.statusCode>=300){reject(failure(response.statusCode));return;}
         if(!value.data||typeof value.data!=='object'||Array.isArray(value.data)){reject(failure('response','اطلاعات پاسخ Windscribe کامل نیست.'));return;}
         resolve(value.data);
@@ -99,7 +108,9 @@ class WindscribeAccount{
     catch(error){
       const code=Number.isInteger(error.code)?error.code:INTERNAL_CODES.has(error.code)?error.code:'unknown';
       const status=Number.isInteger(error.httpStatus)?error.httpStatus:'unavailable';
-      this.diagnostics.push({time:new Date(this.now()).toISOString(),message:`Windscribe account: ${method} ${ENDPOINTS.has(endpoint)?endpoint:'unknown'}; code=${code}; HTTP=${status}`});
+      const reason=[...PROVIDER_REASONS.values()].includes(error.providerReason)?error.providerReason:'unrecognized';
+      const phase=['preparing','captcha','2fa','captcha-retry'].includes(this.pending?.phase)?this.pending.phase:'none';
+      this.diagnostics.push({time:new Date(this.now()).toISOString(),message:`Windscribe account: ${method} ${ENDPOINTS.has(endpoint)?endpoint:'unknown'}; code=${code}; HTTP=${status}; reason=${reason}; phase=${phase}; API=${API_COMPAT_VERSION}`});
       if(this.diagnostics.length>50)this.diagnostics.shift();throw error;
     }
   }
