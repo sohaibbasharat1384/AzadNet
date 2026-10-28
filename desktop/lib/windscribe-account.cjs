@@ -3,12 +3,18 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const https=require('node:https');
+const {validateDevice}=require('./windscribe-wireguard.cjs');
 const VERSION=require('../../package.json').version;
 // API compatibility reference, not this application's own version. Pin the
 // released SDK/application contract, rather than an unreleased master build.
 // https://github.com/Windscribe/Desktop-App/releases/tag/v2.24.13
 const API_COMPAT_VERSION='2.24.13';
-const ENDPOINTS=new Set(['AuthToken/login','Session','ServerCredentials']);
+const API_METHODS=new Map([
+  ['AuthToken/login',['POST']],['Session',['GET','POST','DELETE']],['ServerCredentials',['GET']],
+  ['Inventory/locations',['GET']],['Inventory/servers',['GET']],['PortMap',['GET']],['ServerConfigs',['GET']],
+  ['WgConfigs/init',['POST']],
+]);
+const ENDPOINTS=new Set(API_METHODS.keys());
 const INTERNAL_CODES=new Set(['network','response','redirect','local','input','vault','session','cancel']);
 // Preserve only exact, reviewed provider reasons. Never retain raw error bodies:
 // an upstream error can echo credentials or other request values.
@@ -32,7 +38,7 @@ class WindscribeError extends Error{
   }
 }
 function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=https.request}){
-  if(!ENDPOINTS.has(endpoint)||!['GET','POST','DELETE'].includes(method))return Promise.reject(new Error('Invalid Windscribe API operation'));
+  if(!API_METHODS.get(endpoint)?.includes(method))return Promise.reject(new Error('Invalid Windscribe API operation'));
   return new Promise((resolve,reject)=>{
     const url=new URL('https://api.windscribe.com/'+endpoint);
     const params=new URLSearchParams(Object.entries({...parameters,platform:apiPlatform(),app_version:API_COMPAT_VERSION}).filter(([,value])=>value!==''&&value!=null));
@@ -53,7 +59,12 @@ function apiRequest({method,endpoint,parameters={},token,signal,requestImpl=http
       response.on('end',()=>{
         if(response.statusCode>=300&&response.statusCode<400){reject(failure('redirect','آدرس API تغییر کرده است؛ ورود برای محافظت از اطلاعات حساب متوقف شد.'));return;}
         if(response.statusCode===429){reject(failure(707));return;}
-        let value;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{reject(failure('response','پاسخ معتبر از API Windscribe دریافت نشد.'));return;}
+        const raw=Buffer.concat(chunks).toString('utf8').trim();
+        if(endpoint==='ServerConfigs'&&response.statusCode>=200&&response.statusCode<300&&!raw.startsWith('{')){
+          if(!raw||raw.length>400000||!(/^[A-Za-z0-9+/\r\n]+={0,2}$/).test(raw)){reject(failure('response','قالب اتصال معتبر از Windscribe دریافت نشد.'));return;}
+          resolve({openvpn:Buffer.from(raw,'base64').toString('utf8')});return;
+        }
+        let value;try{value=JSON.parse(raw);}catch{reject(failure('response','پاسخ معتبر از API Windscribe دریافت نشد.'));return;}
         if(!value||typeof value!=='object'||Array.isArray(value)){reject(failure('response','پاسخ API Windscribe معتبر نیست.'));return;}
         if(value.errorCode){reject(failure(Number(value.errorCode),undefined,PROVIDER_REASONS.get(value.errorMessage)));return;}
         if(response.statusCode<200||response.statusCode>=300){reject(failure(response.statusCode));return;}
@@ -98,7 +109,7 @@ function sessionProfile(data){
 class WindscribeAccount{
   constructor({dataDir,vault,request=apiRequest,emit=()=>{},onForget=async()=>{},now=Date.now}={}){
     this.file=path.join(dataDir,'windscribe-account.bin');this.vault=vault;this.request=request;this.emit=emit;this.onForget=onForget;this.now=now;
-    this.token=null;this.identity=null;this.profile=null;this.pending=null;this.pendingTimer=null;this.busy=false;this.initializing=false;this.remembered=false;this.error=null;this.lastAttempt=-Infinity;this.abort=null;this.diagnostics=[];
+    this.token=null;this.identity=null;this.profile=null;this.device=null;this.pending=null;this.pendingTimer=null;this.busy=false;this.initializing=false;this.remembered=false;this.error=null;this.lastAttempt=-Infinity;this.abort=null;this.diagnostics=[];
   }
   canRemember(){try{return this.vault?.available()===true;}catch{return false;}}
   state(){const p=this.pending;return {loggedIn:!!(this.token&&this.profile),restoring:!!(this.token&&!this.profile),busy:this.busy||this.initializing,remembered:this.remembered,canRemember:this.canRemember(),profile:this.profile?{...this.profile}:null,error:this.error,challenge:p?{id:p.id,phase:p.phase,captchaType:p.captchaType||p.preference||'image',asciiArt:p.phase==='captcha'?p.asciiArt:null,image:p.phase==='captcha'&&p.image?structuredClone(p.image):null,message:p.message,expiresAt:p.expiresAt}:null};}
@@ -130,7 +141,8 @@ class WindscribeAccount{
       const stat=await fs.stat(this.file);if(stat.size>65536)throw new Error('Invalid vault');
       const saved=JSON.parse(this.vault.decrypt(await fs.readFile(this.file)));
       if(saved.version!==1||!text(saved.token,4096)||!saved.token||!(/^[a-f0-9]{64}$/).test(saved.identity))throw new Error('Invalid vault');
-      this.token=saved.token;this.identity=saved.identity;this.remembered=true;
+      const device=saved.device?validateDevice(saved.device):null;
+      this.token=saved.token;this.identity=saved.identity;this.device=device;this.remembered=true;
     }catch(error){if(error.code!=='ENOENT')this.error='نشست ذخیره‌شده باز نشد؛ دوباره وارد Windscribe شوید.';return {...this.state(),busy:false};}
     finally{this.initializing=false;this.publish();}
     try{await this.refresh();}catch{}return this.state();
@@ -138,7 +150,7 @@ class WindscribeAccount{
   async save(){
     if(!this.remembered){await fs.rm(this.file,{force:true});return;}
     if(!this.canRemember())throw new WindscribeError('vault','ذخیرهٔ امن سیستم آماده نیست؛ بدون گزینهٔ «مرا به خاطر بسپار» وارد شوید.');
-    const bytes=this.vault.encrypt(JSON.stringify({version:1,token:this.token,identity:this.identity}));
+    const bytes=this.vault.encrypt(JSON.stringify({version:1,token:this.token,identity:this.identity,...(this.device?{device:validateDevice(this.device)}:{})}));
     await fs.mkdir(path.dirname(this.file),{recursive:true,mode:0o700});
     const temp=this.file+'.'+crypto.randomBytes(8).toString('hex')+'.tmp';
     try{await fs.writeFile(temp,bytes,{mode:0o600});await fs.rename(temp,this.file);}finally{await fs.rm(temp,{force:true});}
@@ -218,7 +230,8 @@ class WindscribeAccount{
       this.profile=profile;return this.state();
     }catch(error){if(error.code===701||error.code===706)await this.forget();throw error;}
   });}
-  async credentials(protocol){return this.operation(async()=>{
+  async credentials(protocol){return this.operation(()=>this.loadCredentials(protocol));}
+  async loadCredentials(protocol){
     if(!this.token||!this.profile)throw new WindscribeError(701);
     if(!['ikev2','udp','tcp','stealth','wstunnel'].includes(protocol))throw new WindscribeError('input','WireGuard از کلید داخل فایل کانفیگ استفاده می‌کند.');
     let data;try{data=await this.api('GET','ServerCredentials',{type:protocol==='ikev2'?'ikev2':'openvpn'});}catch(error){if(error.code===701||error.code===706)await this.forget();throw error;}
@@ -227,18 +240,18 @@ class WindscribeAccount{
       const decoded=Buffer.from(value,'base64').toString('utf8');if(!decoded||!text(decoded,512))throw new WindscribeError('response','مشخصات اتصال معتبر از Windscribe دریافت نشد.');result[field]=decoded;
     }
     return {...result,accountId:this.identity};
-  });}
+  }
   async forget(){
     if(this.identity)await this.onForget(this.identity);
-    await fs.rm(this.file,{force:true});this.token=null;this.identity=null;this.profile=null;this.remembered=false;this.clearPending();
+    await fs.rm(this.file,{force:true});this.token=null;this.identity=null;this.profile=null;this.device=null;this.remembered=false;this.clearPending();
   }
   async logout(){return this.operation(async()=>{
     const token=this.token;if(this.identity)await this.onForget(this.identity);
     let remoteRevoked=true;if(token)try{await this.api('DELETE','Session',{},token);}catch{remoteRevoked=false;}
-    await fs.rm(this.file,{force:true});this.token=null;this.identity=null;this.profile=null;this.remembered=false;this.clearPending();
+    await fs.rm(this.file,{force:true});this.token=null;this.identity=null;this.profile=null;this.device=null;this.remembered=false;this.clearPending();
     if(!remoteRevoked)this.error='خروج محلی انجام شد؛ ابطال نشست در سرور تأیید نشد. از بخش My Account سایت می‌توانید نشست‌ها را حذف کنید.';
     return {...this.state(),remoteRevoked};
   });}
-  shutdown(){this.abort?.abort();this.clearPending();this.token=null;this.profile=null;}
+  shutdown(){this.abort?.abort();this.clearPending();this.token=null;this.profile=null;this.device=null;}
 }
 module.exports={WindscribeAccount,WindscribeError,apiRequest,apiPlatform,sessionProfile,captchaData};

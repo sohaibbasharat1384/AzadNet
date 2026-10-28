@@ -49,11 +49,13 @@ class Service{
   }
   async init(){
     await fs.mkdir(this.dataDir,{recursive:true,mode:0o700});
+    // A generated core configuration is never a persistent account store.
+    await fs.rm(path.join(this.dataDir,'runtime.yaml'),{force:true});
     try{
       const stat=await fs.stat(this.file);if(stat.size>16*1024*1024)throw new Error('Saved state exceeds size limit');
       const saved=JSON.parse(await fs.readFile(this.file,'utf8'));this.settings=validateSettings(saved.settings||{},this.settings);if(!this.settings.lanPassword)this.settings.lanPassword=crypto.randomBytes(12).toString('base64url');
       if(!Array.isArray(saved.subscriptions)||saved.subscriptions.length>100)throw new Error('Invalid saved subscriptions');
-      this.subscriptions=saved.subscriptions.map(s=>{
+      this.subscriptions=saved.subscriptions.filter(s=>s.source!=='windscribe-account').map(s=>{
         if(typeof s.id!=='string'||typeof s.name!=='string'||!Array.isArray(s.proxies)||s.proxies.length>10000)throw new Error('Invalid saved subscription');
         if(s.url){const u=new URL(s.url);if(u.protocol!=='https:'||u.username||u.password)throw new Error('Invalid saved subscription URL');}
         return {...s,proxies:s.proxies.map((p,i)=>validateProxy(p,i+1))};
@@ -115,12 +117,40 @@ class Service{
       }
       if(next.length>100||next.reduce((n,s)=>n+s.proxies.length,0)>20000)throw new Error('Profile/server limit exceeded');
       const selected=next.some(s=>s.proxies.some(p=>p.name===this.selectedServer))?this.selectedServer:next[0]?.proxies[0]?.name||null;
-      await atomicJson(this.file,{version:1,settings:this.settings,subscriptions:next,selectedServer:selected});
+      await atomicJson(this.file,this.savedState(next,selected));
       this.subscriptions=next;this.selectedServer=selected;this.publish();
       return {count,added:entries.length-replace.size,updated:replace.size,warnings};
     }finally{this.busy=false;this.publish();}
   }
   windscribeAvailability(){return this.windscribe.availability();}
+  async installWindscribeAccount({proxy,accountId,target,expiresAt=null}){
+    this.requireIdle();
+    if(!(/^[a-f0-9]{64}$/).test(accountId)||!target||typeof target.locationId!=='string')throw new Error('Invalid account connection');
+    const next=this.subscriptions.filter(s=>s.source!=='windscribe-account'),used=new Set(next.flatMap(s=>s.proxies.map(p=>p.name)));
+    const value=validateProxy(proxy,1),base=value.name;for(let n=2;used.has(value.name);n++)value.name=`${base} (${n})`;
+    if(next.length>=100)throw new Error('Profile limit exceeded');
+    if(expiresAt!=null&&(!Number.isSafeInteger(expiresAt)||expiresAt<=Date.now()))throw new Error('تنظیمات اتصال حساب منقضی شده است؛ دوباره متصل شوید.');
+    next.push({id:crypto.randomUUID(),name:'Windscribe · اتصال حساب',source:'windscribe-account',protocol:target.protocol,proxies:[value],accountId,target:{...target},expiresAt,updatedAt:new Date().toISOString()});
+    await atomicJson(this.file,this.savedState(next,value.name));this.subscriptions=next;this.selectedServer=value.name;this.publish();
+  }
+  async removeWindscribeAccount(accountId){
+    const own=this.subscriptions.filter(s=>s.source==='windscribe-account'&&s.accountId===accountId);if(!own.length)return;
+    if(own.some(s=>s.proxies.some(p=>p.name===this.selectedServer))&&this.status!=='disconnected')await this.stop();
+    this.subscriptions=this.subscriptions.filter(s=>!own.includes(s));
+    if(!this.proxyList().some(p=>p.name===this.selectedServer))this.selectedServer=this.proxyList()[0]?.name||null;
+    await fs.rm(path.join(this.dataDir,'runtime.yaml'),{force:true});await this.persist();this.publish();
+  }
+  startAccountExpiryMonitor(){
+    clearTimeout(this.accountExpiryTimer);this.accountExpiryTimer=null;
+    const profile=this.subscriptions.find(s=>s.source==='windscribe-account'&&s.proxies.some(p=>p.name===this.selectedServer));if(!profile?.expiresAt)return;
+    const name=this.selectedServer;
+    const expire=async()=>{
+      if(this.status!=='connected'||this.selectedServer!==name)return;
+      if(this.busy){this.accountExpiryTimer=setTimeout(expire,250);this.accountExpiryTimer.unref?.();return;}
+      try{await this.stop();this.error='مهلت نوسازی کلید این اتصال Windscribe رسید؛ برای ادامه دوباره متصل شوید.';this.log(this.error);this.publish();}catch{}
+    };
+    this.accountExpiryTimer=setTimeout(expire,Math.max(1,profile.expiresAt-Date.now()));this.accountExpiryTimer.unref?.();
+  }
   async transportFailed(error){
     if(this.status!=='connected'||this.shuttingDown)return;
     try{await this.terminate();this.status='disconnected';}catch{this.status='cleanup-required';}
@@ -155,7 +185,11 @@ class Service{
     const entry={time:new Date().toISOString(),message:text};this.logs.push(entry);if(this.logs.length>500)this.logs.splice(0,this.logs.length-500);this.emit('log',entry);
   }
   getLogs(){return this.logs.map(x=>({...x}));}
-  async persist(){await atomicJson(this.file,{version:1,settings:this.settings,subscriptions:this.subscriptions,selectedServer:this.selectedServer});}
+  savedState(subscriptions=this.subscriptions,selectedServer=this.selectedServer){
+    const saved=subscriptions.filter(s=>s.source!=='windscribe-account');
+    return {version:1,settings:this.settings,subscriptions:saved,selectedServer:saved.some(s=>s.proxies.some(p=>p.name===selectedServer))?selectedServer:saved[0]?.proxies[0]?.name||null};
+  }
+  async persist(){await atomicJson(this.file,this.savedState());}
   requireIdle(){if(this.busy||this.testing||this.sharingUpdating||this.status!=='disconnected')throw new Error('Disconnect before changing configuration');}
   getSharing(){return {...sharingInfo(this.settings,this.status),updating:!!this.sharingUpdating};}
   getSharingText(){return sharingText(this.getSharing());}
@@ -282,14 +316,15 @@ class Service{
         catch{this.delays.set(selected,-1);throw new Error('سرور انتخاب‌شده پاسخ نداد. «سنجش و انتخاب سرور پاسخ‌گو» را بزنید و پس از پایان دوباره متصل شوید.');}
       }
       if(this.shuttingDown)throw new Error('Connection cancelled');if(failure)throw failure;if(this.windscribe.failure)throw this.windscribe.failure;
-      this.coreVersion=version.version;this.status='connected';if(!testOnly)this.startLicenseMonitor();this.startTransportMonitor();this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}; TUN: ${this.activeTun?'active':'off'}; native IKEv2: ${this.nativeVpn?'active':'off'}`);
+      this.coreVersion=version.version;this.status='connected';if(!testOnly){this.startLicenseMonitor();this.startAccountExpiryMonitor();}this.startTransportMonitor();this.log(`Mihomo ${this.coreVersion} ready. Proxy: 127.0.0.1:${this.settings.mixedPort}; TUN: ${this.activeTun?'active':'off'}; native IKEv2: ${this.nativeVpn?'active':'off'}`);
     }catch(e){let cleanupFailed=false;try{await this.terminate();}catch{cleanupFailed=true;}this.status=cleanupFailed?'cleanup-required':'disconnected';this.error=(e.code==='ENOENT'?'Mihomo core was not found':e.message)+(cleanupFailed?'؛ قطع اتصال IKEv2 سیستم تأیید نشد.':'');this.log(this.error);throw new Error(this.error);}
     finally{this.busy=false;this.publish();}
     return this.getState();
   }
-  async terminate(){this.stopLicenseMonitor();this.stopTransportMonitor();this.activeTun=false;const child=this.process;this.process=null;this.controller=null;
+  async terminate(){this.stopLicenseMonitor();this.stopTransportMonitor();clearTimeout(this.accountExpiryTimer);this.accountExpiryTimer=null;this.activeTun=false;const child=this.process;this.process=null;this.controller=null;
     if(child)await new Promise(resolve=>{let ended=false;const finish=()=>{if(ended)return;ended=true;clearTimeout(timer);resolve();};child.once('exit',finish);const timer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}finish();},2000);try{child.kill();}catch{finish();}if(child.exitCode!==null&&child.exitCode!==undefined)finish();});
     await this.windscribe.stop();this.nativeVpn=false;
+    if(this.subscriptions.some(s=>s.source==='windscribe-account'))await fs.rm(path.join(this.dataDir,'runtime.yaml'),{force:true});
   }
   async stop(){if(this.busy)throw new Error('Connection operation in progress');this.speedTestAbort?.abort();this.busy=true;this.status='disconnecting';this.publish();try{await this.terminate();this.status='disconnected';this.error=null;this.log('Disconnected');}catch(error){this.status='cleanup-required';this.error='قطع اتصال IKEv2 سیستم تأیید نشد؛ دوباره قطع اتصال را بزنید یا VPN سیستم را بررسی کنید.';this.log(this.error);throw new Error(this.error);}finally{this.busy=false;this.publish();}return this.getState();}
   async shutdown(){this.shuttingDown=true;this.speedTestAbort?.abort();if(this.validationProcess){try{this.validationProcess.kill();}catch{}}try{await this.terminate();}catch{}if(this.startPromise){try{await this.startPromise;}catch{}}try{await this.terminate();this.status='disconnected';}catch(error){this.status='cleanup-required';throw error;}finally{this.busy=false;this.publish();}}

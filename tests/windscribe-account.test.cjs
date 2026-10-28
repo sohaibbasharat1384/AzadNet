@@ -72,13 +72,20 @@ test('logout attempts remote session deletion and clears local token even when n
     await f.login(true);const result=await f.account.logout();assert.equal(result.loggedIn,false);assert.equal(result.remoteRevoked,false);assert.equal(f.calls.at(-1).token,token);assert.equal(f.account.token,null);assert.ok(result.error);assert.equal(result.error.includes(accountPassword),false);await assert.rejects(fs.access(f.account.file),{code:'ENOENT'});
   }finally{await f.close();}
 });
-function transportFixture(reply,status=200){
-  let captured;const requestImpl=(url,options,onResponse)=>{const req=new EventEmitter();req.setTimeout=()=>{};req.destroy=()=>req.emit('error',Error(accountPassword));req.end=body=>{captured={url:String(url),options,body};const res=new PassThrough();res.statusCode=status;onResponse(res);setImmediate(()=>res.end(JSON.stringify(reply)));};return req;};
+function transportFixture(reply,status=200,{raw=false}={}){
+  let captured;const requestImpl=(url,options,onResponse)=>{const req=new EventEmitter();req.setTimeout=()=>{};req.destroy=()=>req.emit('error',Error(accountPassword));req.end=body=>{captured={url:String(url),options,body};const res=new PassThrough();res.statusCode=status;onResponse(res);setImmediate(()=>res.end(raw?reply:JSON.stringify(reply)));};return req;};
   return {requestImpl,get captured(){return captured;}};
 }
 
 test('API platform metadata matches the supported Windows and Ubuntu package identifiers',()=>{
   assert.equal(apiPlatform('win32'),'windows');assert.equal(apiPlatform('linux'),'linux_deb_x64');
+});
+
+test('official raw ServerConfigs Base64 is decoded only at its fixed GET endpoint, preserving API errors',async()=>{
+  const content='client\ndev tun\n<ca>\nfixture\n</ca>\n';const t=transportFixture(Buffer.from(content).toString('base64'),200,{raw:true});
+  assert.deepEqual(await apiRequest({method:'GET',endpoint:'ServerConfigs',token,requestImpl:t.requestImpl}),{openvpn:content});assert.equal(t.captured.options.headers.Authorization,'Bearer '+token);
+  const error=transportFixture({errorCode:701,errorMessage:accountPassword},403);await assert.rejects(apiRequest({method:'GET',endpoint:'ServerConfigs',token,requestImpl:error.requestImpl}),{code:701});
+  await assert.rejects(apiRequest({method:'POST',endpoint:'ServerConfigs',token}),/Invalid/);await assert.rejects(apiRequest({method:'DELETE',endpoint:'WgConfigs/init',token}),/Invalid/);
 });
 test('HTTPS transport puts login secrets in POST body, session token in Bearer header, and rejects redirects',async()=>{
   const t=transportFixture({data:{token:'secure'}});await apiRequest({method:'POST',endpoint:'Session',parameters:{username:'user',password:accountPassword,'2fa_code':''},requestImpl:t.requestImpl});
