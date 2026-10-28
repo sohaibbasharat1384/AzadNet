@@ -91,7 +91,7 @@ function renderWindscribe(){
   if(!state)return;
   const subs=state.subscriptions.filter(s=>s.source==='windscribe'),servers=state.servers.filter(s=>s.source==='windscribe');
   const pending=['connecting','disconnecting'].includes(state.status);
-  $('#windscribe-count').textContent=fa(servers.length)+' سرور';
+  if(!windscribeAccountState?.loggedIn)$('#windscribe-count').textContent=fa(servers.length)+' سرور';
   $('#windscribe-import').disabled=windscribeImporting||state.status!=='disconnected'||state.testing;
   $('#windscribe-test').disabled=windscribeImporting||!servers.length||pending||state.testing||state.speedTesting;
   $('#windscribe-empty').hidden=servers.length>0;
@@ -116,6 +116,7 @@ const windscribeCaptcha=new window.WindscribeCaptcha({
   submit:input=>run(async()=>{try{await call('windscribeLoginContinue',input);}finally{await refreshWindscribeAccount();}}),
   refresh:type=>run(async()=>{const pending=windscribeAccountState?.challenge;if(!pending)return;try{await call('windscribeCaptchaRefresh',{id:pending.id,type});}finally{await refreshWindscribeAccount();}})
 });
+const windscribeLocations=new window.WindscribeLocations({call,getState:()=>state,onConnected:async()=>{await refresh();page('home');notify('اتصال Windscribe برقرار شد.');}});
 function setWindscribeAccount(info){
   const wasLoggedIn=!!windscribeAccountState?.loggedIn;windscribeAccountState=info;
   if(!wasLoggedIn&&info.loggedIn)$('#windscribe-use-account').checked=true;
@@ -139,6 +140,7 @@ function setWindscribeAccount(info){
   const p=info.profile;
   $('#windscribe-account-summary').textContent=p?('حساب: '+p.username+'\nپلن: '+(p.isPremium?'اشتراک پولی':'رایگان')+'\n'+(p.status===1?'حساب فعال است':'محدودیت حساب را در سایت بررسی کنید.')+'\nمصرف: '+(p.trafficUsed==null?'نامشخص':bytes(p.trafficUsed))+' از '+(p.unlimited?'نامحدود':p.trafficMax==null?'نامشخص':bytes(p.trafficMax))+(p.expiresAt?'\nپایان اشتراک: '+p.expiresAt:'')):info.restoring?'برای بررسی نشست، «تازه‌سازی حساب» را بزنید یا از حساب خارج شوید.':'با حساب خود وارد شوید تا وضعیت اشتراک را ببینید و مشخصات اتصال را مستقیم از Windscribe دریافت کنید.';
   $('#windscribe-account-error').textContent=info.error||'';
+  windscribeLocations.updateAccount(info);
   windscribeProtocolChanged();
 }
 async function refreshWindscribeAccount(){setWindscribeAccount(await call('windscribeAccount'));}

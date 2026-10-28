@@ -5,7 +5,8 @@ const crypto = require('node:crypto');
 const { Service } = require('./lib/service.cjs');
 const {PROTOCOLS}=require('./lib/windscribe-import.cjs');
 const {WindscribeAccount}=require('./lib/windscribe-account.cjs');
-let window, service, windscribeAccount, quitting = false;
+const {WindscribeProvider}=require('./lib/windscribe-provider.cjs');
+let window, service, windscribeAccount, windscribeProvider, quitting = false;
 if(process.env.AZADNET_DATA_DIR) app.setPath('userData',path.resolve(process.env.AZADNET_DATA_DIR));
 const hasLock=app.requestSingleInstanceLock();
 if(!hasLock) app.quit();
@@ -38,7 +39,8 @@ if(hasLock) app.whenReady().then(async () => {
   windscribeAccount=new WindscribeAccount({dataDir:path.join(app.getPath('userData'),'profiles'),vault:{
     available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text'),
     encrypt:value=>safeStorage.encryptString(value),decrypt:bytes=>safeStorage.decryptString(bytes)
-  },emit:payload=>{if(window&&!window.isDestroyed())window.webContents.send('azadnet-event','windscribe-account',payload);}});
+  },onForget:identity=>windscribeProvider?.forget(identity),emit:payload=>{if(window&&!window.isDestroyed())window.webContents.send('azadnet-event','windscribe-account',payload);}});
+  windscribeProvider=new WindscribeProvider({account:windscribeAccount,service});
   async function windscribeOptions(input,protocol=input?.protocol){
     service.requireIdle();const options={...input,protocol};delete options.accountId;
     if(input?.useAccount===true&&protocol!=='wireguard')Object.assign(options,await windscribeAccount.credentials(protocol));
@@ -47,16 +49,23 @@ if(hasLock) app.whenReady().then(async () => {
   ipcMain.handle('azadnet', async (e,action,...args) => {
     if(e.sender !== window.webContents) throw new Error('Untrusted sender');
     try {
+      if(windscribeProvider.busy&&!['state','windscribeAccount','windscribeInfo','logs','traffic'].includes(action))throw new Error('اتصال Windscribe در حال آماده‌سازی است؛ کمی صبر کنید.');
       if(service.sharingUpdating&&!['state','sharing','logs','traffic'].includes(action))throw new Error('در حال اعمال تنظیمات اشتراک‌گذاری؛ کمی صبر کنید.');
       switch(action) {
         case 'state': return await service.getState();
         case 'windscribeInfo': return await service.windscribeAvailability();
         case 'windscribeAccount': return windscribeAccount.state();
+        case 'windscribeLocations': return await windscribeProvider.catalog(args[0]);
+        case 'windscribeConnect': return await windscribeProvider.connect(args[0]);
         case 'windscribeLogin': return await windscribeAccount.begin(args[0]);
         case 'windscribeLoginContinue': return await windscribeAccount.continue(args[0]);
         case 'windscribeCaptchaRefresh': return await windscribeAccount.refreshCaptcha(args[0]);
         case 'windscribeLoginCancel': return windscribeAccount.cancel();
-        case 'windscribeAccountRefresh': return await windscribeAccount.refresh();
+        case 'windscribeAccountRefresh': {
+          const result=await windscribeAccount.refresh();
+          if(windscribeAccount.profile?.status!==1)await windscribeProvider.forget(windscribeAccount.identity);
+          return result;
+        }
         case 'windscribeLogout': return await windscribeAccount.logout();
         case 'windscribeTest': return await service.testServers({source:'windscribe'});
         case 'windscribeIKEAdd': return await service.importWindscribe([],await windscribeOptions(args[0],'ikev2'));
@@ -101,8 +110,13 @@ if(hasLock) app.whenReady().then(async () => {
         case 'importUrl': return await service.importUrl(...args);
         case 'refresh': return await service.refreshSubscription(args[0]);
         case 'remove': return await service.removeSubscription(args[0]);
-        case 'select': return await service.selectServer(args[0]);
-        case 'start': return await service.start();
+        case 'select': {
+          const target=service.subscriptions.find(s=>s.source==='windscribe-account'&&s.proxies.some(p=>p.name===args[0]));
+          if(target&&service.status==='connected')return await windscribeProvider.connect(target.target);
+          if(service.serverSource()==='windscribe-account'&&service.status==='connected'){await service.stop();await service.selectServer(args[0]);return await service.start();}
+          return await service.selectServer(args[0]);
+        }
+        case 'start': return service.serverSource()==='windscribe-account'?await windscribeProvider.reconnect():await service.start();
         case 'stop': return await service.stop();
         case 'test': return await service.testServers();
         case 'speed': return await service.speedTest();

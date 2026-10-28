@@ -17,7 +17,7 @@ app.whenReady().then(async()=>{
   try{
     const runtime={async recover(){},async stop(){},async availability(){return {wireguard:true,udp:true,tcp:true,ikev2:true,stealth:true,wstunnel:true};}};
     service=new Service({dataDir:dir,windscribeRuntime:runtime,openvpnIdentitySupported:true,emit:(event,payload)=>window?.webContents.send('azadnet-event',event,payload)});await service.init();
-    let clock=10000,preflights=0,logins=0,imageFixture=null;
+    let clock=10000,preflights=0,logins=0,imageFixture=null;const accountConnections=[];
     account=new WindscribeAccount({dataDir:dir,now:()=>clock,vault:{available:()=>safeStorage.isEncryptionAvailable()&&(process.platform!=='linux'||safeStorage.getSelectedStorageBackend()!=='basic_text'),encrypt:value=>safeStorage.encryptString(value),decrypt:value=>safeStorage.decryptString(value)},emit:info=>window?.webContents.send('azadnet-event','windscribe-account',info),request:async r=>{
       if(r.endpoint==='AuthToken/login'){preflights++;return logins?{token:'fixture-security-token'}:{token:'fixture-security-token',captcha:r.parameters.captcha_type==='ascii'?{ascii_art:('WIDE SYNTHETIC TEXT '.repeat(8)+'\n').repeat(8)}:imageFixture};}
       if(r.endpoint==='ServerCredentials')return {username:Buffer.from('fixture-config-user').toString('base64'),password:Buffer.from('fixture-config-password').toString('base64')};
@@ -37,6 +37,8 @@ app.whenReady().then(async()=>{
         if(action==='windscribeCaptchaRefresh'){clock+=2100;return account.refreshCaptcha(args[0]);}
         if(action==='windscribeLoginCancel')return account.cancel();
         if(action==='windscribeAccountRefresh')return account.refresh();
+        if(action==='windscribeLocations')return {loaded:true,updatedAt:Date.now(),ports:{wireguard:[443,80],udp:[443,1194],tcp:[443],ikev2:[500],stealth:[443],wstunnel:[443]},locations:[{id:'10',country:'Fixture Country',countryCode:'NL',city:'Amsterdam',nickname:'Fixture <img src=x onerror=bad()>',available:true,protocols:['wireguard','udp','tcp','ikev2','stealth','wstunnel'],nodeCount:2,load:30},{id:'11',country:'Fixture Country',countryCode:'NL',city:'Locked',nickname:'Pro',available:false,protocols:[],nodeCount:0,premium:true}]};
+        if(action==='windscribeConnect'){accountConnections.push(args[0]);return service.getState();}
         if(action==='windscribeLogout')return account.logout();
         if(action==='windscribeIKEAdd'||action==='windscribeImport'){const o={...args[0]};if(o.useAccount&&o.protocol!=='wireguard')Object.assign(o,await account.credentials(o.protocol));return service.importWindscribe(o.protocol==='ikev2'?[]:[{name:o.protocol+'.conf',text:o.protocol==='wireguard'?wg:o.protocol==='udp'?ovpn.replace('tcp-client','udp'):ovpn}],o);}
         if(action==='select')return service.selectServer(args[0]);
@@ -81,6 +83,16 @@ app.whenReady().then(async()=>{
       assert.equal(await js(`document.querySelector('#windscribe-import-error').textContent`),'');assert.equal(await js(`document.querySelector('#windscribe-form').elements.password.value`),'');
     }
     assert.equal(service.subscriptions.length,6);assert.equal(await js(`document.querySelectorAll('#windscribe-profiles .subscription-item').length`),6);
+    for(let i=0;i<50&&!await js(`document.querySelector('#windscribe-locations button')!==null`);i++)await pause(30);
+    await js(`document.querySelector('#windscribe-location-card').scrollIntoView()`);await pause(100);
+    assert.equal(await js(`document.querySelector('#windscribe-location-card').hidden`),false);assert.equal(await js(`document.querySelectorAll('#windscribe-locations img').length`),0);assert.equal(await js(`document.querySelectorAll('#windscribe-locations button').length`),1);
+    assert.equal(await js(`document.querySelector('#windscribe-location-protocol').options.length`),6);
+    await js(`document.querySelector('#windscribe-location-available').checked=false;document.querySelector('#windscribe-location-available').dispatchEvent(new Event('input'))`);
+    assert.equal(await js(`document.querySelectorAll('#windscribe-locations button').length`),2);assert.equal(await js(`document.querySelector('#windscribe-locations button[data-location-id="11"]').disabled`),true);
+    await js(`document.querySelector('#windscribe-location-search').value='no-match';document.querySelector('#windscribe-location-search').dispatchEvent(new Event('input'))`);assert.equal(await js(`document.querySelectorAll('#windscribe-locations button').length`),0);
+    await js(`document.querySelector('#windscribe-location-search').value='Amsterdam';document.querySelector('#windscribe-location-search').dispatchEvent(new Event('input'));document.querySelector('#windscribe-location-protocol').value='tcp';document.querySelector('#windscribe-location-protocol').dispatchEvent(new Event('change'))`);
+    window.setSize(1181,900);await pause(120);window.setSize(1180,900);await js(`document.querySelector('#windscribe-location-card').scrollIntoView()`);await pause(200);await fs.writeFile(path.join(output,'catalog-wide.png'),(await window.webContents.capturePage()).toPNG());window.setSize(900,670);await pause(150);assert.equal(await js(`document.documentElement.scrollWidth<=window.innerWidth`),true);await fs.writeFile(path.join(output,'catalog-compact.png'),(await window.webContents.capturePage()).toPNG());window.setSize(1180,900);
+    await js(`document.querySelector('#windscribe-locations button[data-location-id="10"]').click()`);for(let i=0;i<50&&!accountConnections.length;i++)await pause(30);assert.deepEqual(accountConnections,[{locationId:'10',protocol:'tcp',port:443}]);await pause(100);await js(`document.querySelector('[data-page="windscribe"]').click()`);await pause(100);
     assert.equal(service.proxyList().find(p=>p.type==='ikev2').password,'fixture-config-password');assert.equal(JSON.stringify(service.getState()).includes('fixture-config-password'),false);
     await pause(300);
     await fs.writeFile(path.join(output,'wide.png'),(await window.webContents.capturePage()).toPNG());
@@ -88,7 +100,7 @@ app.whenReady().then(async()=>{
     await js(`document.querySelector('#windscribe-form').elements.protocol.value='ikev2';document.querySelector('#windscribe-protocol').dispatchEvent(new Event('change'));document.querySelector('#windscribe-profiles').scrollIntoView()`);await pause(100);await fs.writeFile(path.join(output,'profiles.png'),(await window.webContents.capturePage()).toPNG());
     const native=service.proxyList().find(p=>p.type==='ikev2');await service.selectServer(native.name);await js(`document.querySelector('[data-page="home"]').click()`);await pause(100);assert.equal(await js(`document.querySelector('#tun-mode').disabled`),true);
     await js(`document.querySelector('[data-page="windscribe"]').click()`);await pause(100);await js(`document.querySelector('#windscribe-account-logout').click()`);for(let i=0;i<50&&account.state().loggedIn;i++)await pause(30);await pause(100);assert.equal(account.state().loggedIn,false);assert.equal(service.subscriptions.length,6);await assert.rejects(fs.access(account.file),{code:'ENOENT'});
-    assert.equal(await js(`document.querySelector('#windscribe-login-form').hidden`),false);assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,profiles:6,imageCaptcha:true,asciiZoom:true,twoFactor:true,logout:true,consoleErrors:errors},null,2));
-    console.log('Windscribe UI smoke passed: manual image CAPTCHA on synthetic geometry, ASCII zoom, Persian 2FA, OS vault, six imports, logout.');
+    assert.equal(await js(`document.querySelector('#windscribe-login-form').hidden`),false);assert.equal(await js(`document.querySelector('#windscribe-location-card').hidden`),true);assert.deepEqual(errors,[]);await fs.writeFile(path.join(output,'result.json'),JSON.stringify({passed:true,profiles:6,imageCaptcha:true,asciiZoom:true,twoFactor:true,accountCatalog:true,catalogFiltering:true,protocolSelection:true,accountConnect:true,logout:true,consoleErrors:errors},null,2));
+    console.log('Windscribe UI smoke passed: synthetic CAPTCHA/2FA, account catalog/filtering, six protocols, one-click connection, OS vault, imports and logout.');
   }finally{account?.shutdown();await service?.shutdown();window?.destroy();if(!dir.startsWith(path.join(root,'.tools')+path.sep))throw Error('Unsafe fixture cleanup');await fs.rm(dir,{recursive:true,force:true});}
 }).then(()=>app.exit(0)).catch(e=>{console.error(e);app.exit(1);});
