@@ -2,7 +2,7 @@
 
 Independent Persian desktop VPN/proxy client for Windows x64 and Ubuntu/Debian
 amd64. Built with Electron and a pinned, patched Mihomo core. Current application
-version: **0.3.3** (local Windscribe CAPTCHA improvements; direct account login still fails with1337 for the reported real account; published downloads below are 0.2.1).
+version: **0.3.4** (local Windscribe login contract fix; Windows account login confirmed by the user; published downloads below are 0.2.1).
 
 [راهنمای فارسی](README.fa.md) · [تاریخچهٔ مراحل](CHANGELOG.fa.md) ·
 [Runtime resources](resources/README.md) · [Third-party notices](THIRD_PARTY_NOTICES.md)
@@ -144,9 +144,21 @@ Version 0.3.3 separates AzadNet's version from the API compatibility reference
 AzadNet's own version remains explicit in `User-Agent` and `X-AzadNet-Version`.
 A negative request without a security token reached error708. This did **not**
 validate the complete login path: the user subsequently reported1337 after a
-manual CAPTCHA in0.3.3. The underlying incompatibility remains unresolved.
+manual CAPTCHA in 0.3.3. That incompatibility is addressed by 0.3.4 below.
 Source diagnostics now record only allowlisted provider-reason identifiers and
 the login phase, without raw error bodies or credentials. No controls are disabled.
+
+Version 0.3.4 matches the released SDK's anonymous
+`Authorization: Bearer 0` header and omit the old extension MD5/time fields.
+The compatibility reference is pinned to released version 2.24.13; the SDK's
+User-Agent syntax is accompanied by explicit `X-AzadNet-Client` and
+`X-AzadNet-Version` headers identifying this independent client. Ubuntu metadata
+uses `linux_deb_x64`. The anonymous header fixed preflight dispatch in a live
+synthetic test, but the subsequent real-account attempt still returned 1337.
+After the complete header/version alignment, the user confirmed successful
+Windows account login; the subsequent authenticated Session GET returned 200.
+This validates account login/refresh, not a live VPN connection to a Windscribe
+server. The new Ubuntu binary/account flow has not been executed on Ubuntu.
 
 The account password is used only during login; it is not saved in settings or
 logs. **Remember me** stores only the session token and an account identifier,
